@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "aws": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "/path/to/aws-sdk-mcp",
+        "aws-safe-mcp",
+        "--profile",
+        "dev",
+        "--region",
+        "eu-west-2",
+        "--readonly",
+        "--config",
+        "~/.config/aws-safe-mcp/config.yaml"
+      ]
+    }
+  }
+}
