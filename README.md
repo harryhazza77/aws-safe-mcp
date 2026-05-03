@@ -1,6 +1,8 @@
 # aws-safe-mcp
 
 [![CI](https://github.com/harryhazza77/aws-safe-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/harryhazza77/aws-safe-mcp/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/aws-safe-mcp.svg)](https://pypi.org/project/aws-safe-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/aws-safe-mcp.svg)](https://pypi.org/project/aws-safe-mcp/)
 
 Safe, read-only AWS investigation tools for AI coding agents.
 
