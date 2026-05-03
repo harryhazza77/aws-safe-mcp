@@ -22,6 +22,25 @@ Use it to:
 - Check permission paths with IAM simulation when available.
 - Give AI clients useful AWS context without handing them a raw SDK shell.
 
+## Install In An AI Client
+
+Use the published package with any MCP client that supports stdio:
+
+```bash
+uvx aws-safe-mcp \
+  --profile dev \
+  --region eu-west-2 \
+  --readonly \
+  --config ~/.config/aws-safe-mcp/config.yaml
+```
+
+Client-specific setup:
+
+- [Claude Code](docs/claude-code.md)
+- [Claude Desktop](docs/claude-desktop.md)
+- [Cursor](docs/cursor.md)
+- [Provider-neutral notes](docs/ai-clients.md)
+
 ```mermaid
 flowchart LR
     Client["AI client"] --> MCP["aws-safe-mcp"]
@@ -163,7 +182,7 @@ failure-investigation tools for:
 See [docs/tools.md](docs/tools.md) for the full tool catalog, inputs, and shared
 dependency graph contract.
 
-## Client Setup
+## Client Setup Details
 
 Provider-neutral setup notes:
 
