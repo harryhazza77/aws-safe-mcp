@@ -1,13 +1,14 @@
 # Goal
 
-Use this file to shape an ambitious `aws-safe-mcp` workstream before execution.
-Edit it directly, then ask Codex to plan from it.
+Use this file to run an ambitious `aws-safe-mcp` workstream. The plan lives in
+[backlog.md](backlog.md); this file defines how to execute it.
 
 ## Working Goal
 
-Plan and execute a focused set of high-value `aws-safe-mcp` features. Each
-feature should be useful to real users, tested, verified against local AWS
-emulator fixtures where practical, and committed as a focused change.
+Execute focused, high-value `aws-safe-mcp` features from [backlog.md](backlog.md).
+Each feature should be useful to real users, tested, verified against local AWS
+emulator fixtures where practical, documented, and committed as a focused
+change.
 
 ## Repositories
 
@@ -17,9 +18,35 @@ emulator fixtures where practical, and committed as a focused change.
 ## Current Direction
 
 - Use [features.md](features.md) to understand current user-facing capability.
-- Use [backlog.md](backlog.md) to choose candidate features.
+- Use [backlog.md](backlog.md) as the ordered implementation plan.
+- Pick the first backlog item by default, unless the user names a different
+  item.
 - Prefer diagnostic workflows over raw list tools.
 - Prefer small features that improve safe AWS investigation.
+
+## Execution Prompt
+
+When the user invokes `/goal`, do this:
+
+1. Read `docs/features.md`, `docs/backlog.md`, and `docs/goal.md`.
+2. Select the first unfinished backlog item unless the user explicitly picks
+   another item.
+3. Cross-check existing code and docs to avoid duplicating a feature.
+4. Implement the smallest version that satisfies the backlog acceptance notes.
+5. Add or update focused unit tests.
+6. Update `docs/tools.md` and move the completed capability from
+   `docs/backlog.md` into `docs/features.md`.
+7. If Terraform fixture changes are needed, update
+   `/Users/hareshpatel/Documents/code/aws-sdk-mcp-tf` and commit that repo
+   separately.
+8. Run local verification:
+   - Always run focused tests plus `uv run ruff check src tests`,
+     `uv run mypy`, and `uv run pytest`.
+   - Run MiniStack/AWS CLI proof only when required commands are already
+     approved or can run without extra prompts.
+   - If emulator proof would require new permission prompts, stop after unit
+     tests and clearly report the exact skipped proof command shapes.
+9. Commit the main repo as one focused feature commit.
 
 ## Fixture Strategy
 
@@ -43,6 +70,7 @@ Each feature should have:
 - Fixture changes when local emulator proof needs new AWS resources.
 - AWS CLI proof against the emulator when applicable.
 - `aws-safe-mcp` proof against the emulator when applicable.
+- Move the completed item out of `docs/backlog.md` and into `docs/features.md`.
 - One focused commit in the main repo.
 - A separate fixture repo commit when Terraform fixtures change.
 
@@ -59,38 +87,12 @@ Each feature should have:
 - Return partial results with warnings when permissions or emulator support are
   incomplete.
 
-## Planning Prompt
+## Planning Mode
 
-Ask Codex:
-
-```text
-Read docs/features.md, docs/backlog.md, and docs/goal.md.
-
-Create a proposed implementation plan for the next feature set. Start with
-planning only; do not write code until I approve the feature list.
-
-For each proposed feature include:
-- user value
-- existing implementation overlap
-- acceptance criteria
-- unit test plan
-- Terraform fixture changes
-- emulator choice: Floci, MiniStack, or both
-- AWS CLI verification command shape
-- aws-safe-mcp verification command shape
-- likely files to change
-- risks or open questions
-- when finished, move the item from backlog to features
-
-Prefer the smallest sequence of features that proves the direction.
-```
-
-## Open Questions
-
-- How many features should the next batch include?
-- Should fixture repo commits be paired one-for-one with main repo feature
-  commits?
-- Which emulator should be the primary verification target for CI later?
+Only switch to planning mode when the user explicitly asks to plan, asks for a
+proposal, or says not to write code yet. In planning mode, describe user value,
+existing overlap, acceptance criteria, tests, fixture changes, emulator choice,
+verification command shapes, likely files, and risks.
 
 ## Candidate First Batch
 

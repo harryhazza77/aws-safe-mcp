@@ -272,6 +272,32 @@ Inputs:
 - `include_permission_checks` optional, default `true`
 - `max_permission_checks` optional
 
+## SNS
+
+### `list_sns_topics`
+
+Lists SNS topics visible to the active AWS credentials. It does not publish
+messages.
+
+Inputs:
+
+- `region` optional
+- `name_prefix` optional
+- `max_results` optional
+
+### `get_sns_topic_summary`
+
+Summarizes one SNS topic using metadata APIs only. Includes display name,
+encryption shape, delivery-policy presence, topic policy statement count, and
+bounded subscription summaries. HTTP endpoints only return scheme, host, and
+whether a path exists; email and unknown endpoint types are redacted.
+
+Inputs:
+
+- `topic_arn` required
+- `region` optional
+- `max_subscriptions` optional
+
 ## CloudWatch Logs
 
 ### `list_cloudwatch_log_groups`

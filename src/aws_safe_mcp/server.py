@@ -56,6 +56,8 @@ from aws_safe_mcp.tools.resource_search import search_aws_resources as search_aw
 from aws_safe_mcp.tools.s3 import get_s3_bucket_summary as get_s3_bucket_summary_tool
 from aws_safe_mcp.tools.s3 import list_s3_buckets as list_s3_buckets_tool
 from aws_safe_mcp.tools.s3 import list_s3_objects as list_s3_objects_tool
+from aws_safe_mcp.tools.sns import get_sns_topic_summary as get_sns_topic_summary_tool
+from aws_safe_mcp.tools.sns import list_sns_topics as list_sns_topics_tool
 from aws_safe_mcp.tools.sqs import (
     explain_sqs_queue_dependencies as explain_sqs_queue_dependencies_tool,
 )
@@ -83,6 +85,7 @@ def create_server(runtime: AwsRuntime) -> FastMCP:
     _register_step_functions_tools(mcp, audit, runtime)
     _register_s3_tools(mcp, audit, runtime)
     _register_sqs_tools(mcp, audit, runtime)
+    _register_sns_tools(mcp, audit, runtime)
     _register_dynamodb_tools(mcp, audit, runtime)
     _register_cloudwatch_tools(mcp, audit, runtime)
     _register_api_gateway_tools(mcp, audit, runtime)
@@ -389,6 +392,38 @@ def _register_sqs_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
             region=region,
             include_permission_checks=include_permission_checks,
             max_permission_checks=max_permission_checks,
+        )
+
+
+def _register_sns_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -> None:
+    @mcp.tool()
+    @audit.tool("list_sns_topics")
+    def list_sns_topics(
+        region: str | None = None,
+        name_prefix: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """List SNS topics without publishing messages."""
+        return list_sns_topics_tool(
+            runtime,
+            region=region,
+            name_prefix=name_prefix,
+            max_results=max_results,
+        )
+
+    @mcp.tool()
+    @audit.tool("get_sns_topic_summary")
+    def get_sns_topic_summary(
+        topic_arn: str,
+        region: str | None = None,
+        max_subscriptions: int | None = None,
+    ) -> dict[str, object]:
+        """Summarize SNS topic metadata and subscriptions safely."""
+        return get_sns_topic_summary_tool(
+            runtime,
+            topic_arn=topic_arn,
+            region=region,
+            max_subscriptions=max_subscriptions,
         )
 
 

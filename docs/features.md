@@ -110,6 +110,9 @@ Related tools:
 - Explain SQS queue dependencies, including DLQ/redrive relationships,
   EventBridge producers, Lambda event source consumers, and likely permission
   needs.
+- List SNS topics and summarize topic metadata without publishing messages.
+- Inspect SNS display name, encryption shape, delivery-policy presence, topic
+  policy statement count, and bounded safe subscription endpoint summaries.
 
 Related tools:
 
@@ -121,6 +124,8 @@ Related tools:
 - `list_sqs_queues`
 - `get_sqs_queue_summary`
 - `explain_sqs_queue_dependencies`
+- `list_sns_topics`
+- `get_sns_topic_summary`
 
 ## Logs And Failure Signals
 
