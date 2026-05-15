@@ -67,6 +67,28 @@ Good questions for this server:
 - Does an execution role or resource policy appear to allow the expected path?
 - Am I looking at the intended AWS account before resource calls run?
 
+## How This Differs From AWS MCP
+
+The official AWS MCP server is the right tool for broad AWS access, current AWS
+documentation, and general cloud operations. `aws-safe-mcp` is deliberately
+narrower: it is a read-only diagnostic layer for serverless workloads.
+
+Use both when that helps. Let AWS MCP handle general AWS API and documentation
+questions, and use `aws-safe-mcp` when you want bounded investigation results
+that are already shaped for AI reasoning.
+
+| Need | Best fit |
+| --- | --- |
+| Ask current AWS documentation questions | AWS MCP |
+| Explore broad AWS APIs and services | AWS MCP |
+| Trace Lambda, EventBridge, Step Functions, or API Gateway dependencies | `aws-safe-mcp` |
+| Check IAM permission paths with concise verdicts | `aws-safe-mcp` |
+| Diagnose recent serverless failure signals without raw payloads | `aws-safe-mcp` |
+| Keep AI clients away from generic AWS API passthrough | `aws-safe-mcp` |
+
+The goal is not to replace AWS MCP. The goal is to add a safer, opinionated
+diagnostic layer beside it.
+
 ## Safety Promises
 
 - No generic `aws_call` tool.
