@@ -107,6 +107,9 @@ Related tools:
 - List SQS queues and summarize queue metadata without receiving messages.
 - Inspect queue timing attributes, approximate message counts, DLQ/redrive
   configuration, encryption shape, and queue policy statement count.
+- Explain SQS queue dependencies, including DLQ/redrive relationships,
+  EventBridge producers, Lambda event source consumers, and likely permission
+  needs.
 
 Related tools:
 
@@ -117,6 +120,7 @@ Related tools:
 - `dynamodb_table_summary`
 - `list_sqs_queues`
 - `get_sqs_queue_summary`
+- `explain_sqs_queue_dependencies`
 
 ## Logs And Failure Signals
 

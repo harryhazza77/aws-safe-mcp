@@ -258,6 +258,20 @@ Inputs:
 - `queue_url` required
 - `region` optional
 
+### `explain_sqs_queue_dependencies`
+
+Maps one SQS queue into the shared dependency graph shape. It summarizes
+redrive/DLQ relationships, EventBridge rules that target the queue, Lambda event
+source mappings that poll it, and likely producer/consumer permission needs. It
+does not receive messages or return message bodies.
+
+Inputs:
+
+- `queue_url` required
+- `region` optional
+- `include_permission_checks` optional, default `true`
+- `max_permission_checks` optional
+
 ## CloudWatch Logs
 
 ### `list_cloudwatch_log_groups`

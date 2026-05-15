@@ -28,6 +28,10 @@ emulator fixtures where practical, and committed as a focused change.
 - Verify fixture resources with AWS CLI before relying on them in MCP tests.
 - Verify `aws-safe-mcp` against the same emulator with `endpoint_url` in the
   config file.
+- For unattended slash-goal runs, pre-approve or run from an environment that
+  permits `uv run`, MiniStack `make` targets, and localhost AWS CLI checks.
+  Otherwise stop after unit tests and leave live emulator proof as a manual
+  verification step.
 
 ## Feature Rules
 
@@ -90,6 +94,5 @@ Prefer the smallest sequence of features that proves the direction.
 
 ## Candidate First Batch
 
-1. SQS queue dependency explanation.
-2. Step Functions execution diagnostics upgrade.
-3. API Gateway route diagnostics.
+1. Step Functions execution diagnostics upgrade.
+2. API Gateway route diagnostics.

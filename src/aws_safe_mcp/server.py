@@ -56,6 +56,9 @@ from aws_safe_mcp.tools.resource_search import search_aws_resources as search_aw
 from aws_safe_mcp.tools.s3 import get_s3_bucket_summary as get_s3_bucket_summary_tool
 from aws_safe_mcp.tools.s3 import list_s3_buckets as list_s3_buckets_tool
 from aws_safe_mcp.tools.s3 import list_s3_objects as list_s3_objects_tool
+from aws_safe_mcp.tools.sqs import (
+    explain_sqs_queue_dependencies as explain_sqs_queue_dependencies_tool,
+)
 from aws_safe_mcp.tools.sqs import get_sqs_queue_summary as get_sqs_queue_summary_tool
 from aws_safe_mcp.tools.sqs import list_sqs_queues as list_sqs_queues_tool
 from aws_safe_mcp.tools.stepfunctions import (
@@ -369,6 +372,23 @@ def _register_sqs_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
             runtime,
             queue_url=queue_url,
             region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("explain_sqs_queue_dependencies")
+    def explain_sqs_queue_dependencies(
+        queue_url: str,
+        region: str | None = None,
+        include_permission_checks: bool = True,
+        max_permission_checks: int | None = None,
+    ) -> dict[str, object]:
+        """Map SQS producers, consumers, DLQ, and inferred permissions."""
+        return explain_sqs_queue_dependencies_tool(
+            runtime,
+            queue_url=queue_url,
+            region=region,
+            include_permission_checks=include_permission_checks,
+            max_permission_checks=max_permission_checks,
         )
 
 
