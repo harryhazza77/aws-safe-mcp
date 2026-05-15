@@ -16,6 +16,7 @@ the deeper operational and development details.
 - [Features](features.md): user-facing capabilities grouped by investigation
   workflow.
 - [Backlog](backlog.md): high-value feature candidates and fixture ideas.
+- [Goal](goal.md): editable planning prompt for the next feature workstream.
 - [Lambda network access contract](lambda-network-access.md): proposed response
   shape and scenarios for Lambda internet/intranet reachability tracing.
 - [Architecture](architecture.md): design decisions, runtime flow, and extension
