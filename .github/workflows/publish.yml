@@ -1,0 +1,81 @@
+name: Publish
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Verify release tag matches package version
+        run: |
+          version="$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          echo "PACKAGE_VERSION=${version}" >> "$GITHUB_ENV"
+          test "${GITHUB_REF_NAME}" = "v${version}"
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
+
+      - name: Security lint
+        run: uv run bandit -q -r src
+
+      - name: Dependency audit
+        run: uv run pip-audit
+
+      - name: Test
+        run: uv run pytest --cov=aws_safe_mcp --cov-report=term-missing
+
+      - name: Build package
+        run: uv build
+
+      - name: Inspect package contents
+        run: |
+          tar -tzf "dist/aws_safe_mcp-${PACKAGE_VERSION}.tar.gz"
+          unzip -l "dist/aws_safe_mcp-${PACKAGE_VERSION}-py3-none-any.whl"
+
+      - name: Publish package
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Verify published CLI
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if uvx --from "aws-safe-mcp==${PACKAGE_VERSION}" aws-safe-mcp --help; then
+              exit 0
+            fi
+            echo "PyPI install verification attempt ${attempt} failed; retrying..."
+            sleep 20
+          done
+          exit 1

@@ -229,8 +229,27 @@ tar -tzf dist/aws_safe_mcp-*.tar.gz
 unzip -l dist/aws_safe_mcp-*.whl
 ```
 
-- Publish only from a clean working tree.
-- Use a PyPI trusted publisher or scoped API token.
+- Merge the release-prep PR.
+- Tag the exact release commit and create a GitHub Release named `vX.Y.Z`.
+- Publish through `.github/workflows/publish.yml` using the `pypi` environment
+  and PyPI trusted publishing.
+
+The publish workflow verifies that the GitHub Release tag matches the package
+version in `pyproject.toml`, reruns the local verification suite, builds and
+inspects the package contents, publishes through PyPI trusted publishing, and
+runs a post-publish `uvx` CLI check.
+
+Manual fallback:
+
+```bash
+uv publish \
+  --token 'pypi-...' \
+  dist/aws_safe_mcp-X.Y.Z.tar.gz \
+  dist/aws_safe_mcp-X.Y.Z-py3-none-any.whl
+```
+
+Only use manual publishing when the trusted publisher workflow is unavailable,
+and only upload the artifacts for the intended version.
 
 After publishing:
 
