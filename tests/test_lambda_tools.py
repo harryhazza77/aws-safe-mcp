@@ -11,6 +11,7 @@ from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.lambda_tools import (
     check_lambda_permission_path,
     explain_lambda_dependencies,
+    explain_lambda_network_access,
     get_lambda_recent_errors,
     get_lambda_summary,
     investigate_lambda_failure,
@@ -110,6 +111,13 @@ class FakeLambdaClient:
                 }
             ]
         }
+
+
+class NonVpcLambdaClient(FakeLambdaClient):
+    def get_function_configuration(self, FunctionName: str) -> dict[str, Any]:
+        response = super().get_function_configuration(FunctionName)
+        response["VpcConfig"] = {}
+        return response
 
 
 class FakeCloudWatchClient:
@@ -247,6 +255,60 @@ class FakeIamClient:
         }
 
 
+class FakeEc2Client:
+    def __init__(
+        self,
+        *,
+        subnets: list[dict[str, Any]] | None = None,
+        security_groups: list[dict[str, Any]] | None = None,
+        route_tables: list[dict[str, Any]] | None = None,
+        network_acls: list[dict[str, Any]] | None = None,
+        endpoints: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.subnets = subnets or [{"SubnetId": "subnet-1"}, {"SubnetId": "subnet-2"}]
+        self.security_groups = security_groups or [
+            {
+                "GroupId": "sg-1",
+                "GroupName": "lambda-egress",
+                "IpPermissionsEgress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 443,
+                        "ToPort": 443,
+                        "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+                    }
+                ],
+            }
+        ]
+        self.route_tables = route_tables or [
+            {
+                "RouteTableId": "rtb-private",
+                "Associations": [{"SubnetId": "subnet-1"}, {"SubnetId": "subnet-2"}],
+                "Routes": [
+                    {"DestinationCidrBlock": "10.0.0.0/16", "GatewayId": "local"},
+                    {"DestinationCidrBlock": "0.0.0.0/0", "NatGatewayId": "nat-1"},
+                ],
+            }
+        ]
+        self.network_acls = network_acls or []
+        self.endpoints = endpoints or []
+
+    def describe_subnets(self, **_: Any) -> dict[str, Any]:
+        return {"Subnets": self.subnets}
+
+    def describe_security_groups(self, **_: Any) -> dict[str, Any]:
+        return {"SecurityGroups": self.security_groups}
+
+    def describe_route_tables(self, **_: Any) -> dict[str, Any]:
+        return {"RouteTables": self.route_tables}
+
+    def describe_network_acls(self, **_: Any) -> dict[str, Any]:
+        return {"NetworkAcls": self.network_acls}
+
+    def describe_vpc_endpoints(self, **_: Any) -> dict[str, Any]:
+        return {"VpcEndpoints": self.endpoints}
+
+
 class FakeRuntime:
     def __init__(self) -> None:
         self.config = AwsSafeConfig(
@@ -260,6 +322,7 @@ class FakeRuntime:
         self.cloudwatch_client = FakeCloudWatchClient()
         self.logs_client = FakeLogsClient()
         self.iam_client = FakeIamClient()
+        self.ec2_client = FakeEc2Client()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
         assert region == "eu-west-2"
@@ -271,6 +334,8 @@ class FakeRuntime:
             return self.logs_client
         if service_name == "iam":
             return self.iam_client
+        if service_name == "ec2":
+            return self.ec2_client
         raise AssertionError(f"Unexpected service {service_name}")
 
 
@@ -345,6 +410,112 @@ def test_get_lambda_summary_reports_metric_data_warnings() -> None:
 
     assert result["recent_metrics"]["available"] is True
     assert result["recent_metrics"]["warnings"] == ["Metric errors returned status PartialData"]
+
+
+def test_explain_lambda_network_access_reports_non_vpc_runtime() -> None:
+    runtime = FakeRuntime()
+    runtime.lambda_client = NonVpcLambdaClient()
+
+    result = explain_lambda_network_access(runtime, "dev-api")
+
+    assert result["summary"]["network_mode"] == "aws_managed"
+    assert result["summary"]["internet_access"] == "yes"
+    assert result["network_context"]["vpc_id"] is None
+    assert result["paths"] == []
+
+
+def test_explain_lambda_network_access_reports_nat_internet_path() -> None:
+    result = explain_lambda_network_access(FakeRuntime(), "dev-api")
+
+    assert result["summary"]["network_mode"] == "vpc"
+    assert result["summary"]["internet_access"] == "yes"
+    assert result["egress"]["internet"]["via"] == ["nat-1"]
+    assert {path["from_subnet"] for path in result["paths"] if path["verdict"] == "reachable"} == {
+        "subnet-1",
+        "subnet-2",
+    }
+    assert "wide_ipv4_egress" in result["summary"]["main_risks"]
+
+
+def test_explain_lambda_network_access_reports_route_block() -> None:
+    runtime = FakeRuntime()
+    runtime.ec2_client = FakeEc2Client(
+        route_tables=[
+            {
+                "RouteTableId": "rtb-isolated",
+                "Associations": [{"SubnetId": "subnet-1"}, {"SubnetId": "subnet-2"}],
+                "Routes": [{"DestinationCidrBlock": "10.0.0.0/16", "GatewayId": "local"}],
+            }
+        ]
+    )
+
+    result = explain_lambda_network_access(runtime, "dev-api")
+
+    internet_paths = [path for path in result["paths"] if path["destination_class"] == "internet"]
+    assert result["summary"]["internet_access"] == "no"
+    assert {path["verdict"] for path in internet_paths} == {"blocked"}
+    assert result["egress"]["blocked_or_unknown"][0]["reason"] == (
+        "rtb-isolated has no ipv4 default route"
+    )
+
+
+def test_explain_lambda_network_access_reports_security_group_block() -> None:
+    runtime = FakeRuntime()
+    runtime.ec2_client = FakeEc2Client(
+        security_groups=[
+            {
+                "GroupId": "sg-1",
+                "GroupName": "private-only",
+                "IpPermissionsEgress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 443,
+                        "ToPort": 443,
+                        "IpRanges": [{"CidrIp": "10.0.0.0/8"}],
+                    }
+                ],
+            }
+        ]
+    )
+
+    result = explain_lambda_network_access(runtime, "dev-api")
+
+    internet_paths = [path for path in result["paths"] if path["destination_class"] == "internet"]
+    assert result["summary"]["internet_access"] == "no"
+    assert internet_paths[0]["limited_by"] == [
+        "no security group egress rule allows tcp/443 to 0.0.0.0/0"
+    ]
+
+
+def test_explain_lambda_network_access_reports_mixed_subnet_routes() -> None:
+    runtime = FakeRuntime()
+    runtime.ec2_client = FakeEc2Client(
+        route_tables=[
+            {
+                "RouteTableId": "rtb-nat",
+                "Associations": [{"SubnetId": "subnet-1"}],
+                "Routes": [
+                    {"DestinationCidrBlock": "10.0.0.0/16", "GatewayId": "local"},
+                    {"DestinationCidrBlock": "0.0.0.0/0", "NatGatewayId": "nat-1"},
+                ],
+            },
+            {
+                "RouteTableId": "rtb-isolated",
+                "Associations": [{"SubnetId": "subnet-2"}],
+                "Routes": [{"DestinationCidrBlock": "10.0.0.0/16", "GatewayId": "local"}],
+            },
+        ]
+    )
+
+    result = explain_lambda_network_access(runtime, "dev-api")
+
+    internet_paths = [path for path in result["paths"] if path["destination_class"] == "internet"]
+    assert result["summary"]["internet_access"] == "partial"
+    assert {path["from_subnet"]: path["verdict"] for path in internet_paths} == {
+        "subnet-1": "reachable",
+        "subnet-2": "blocked",
+    }
+    assert "subnet_route_mismatch" in result["summary"]["main_risks"]
 
 
 def test_get_lambda_recent_errors_returns_bounded_grouped_events() -> None:

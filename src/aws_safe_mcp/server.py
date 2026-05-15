@@ -38,6 +38,9 @@ from aws_safe_mcp.tools.lambda_tools import (
     explain_lambda_dependencies as explain_lambda_dependencies_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
+    explain_lambda_network_access as explain_lambda_network_access_tool,
+)
+from aws_safe_mcp.tools.lambda_tools import (
     get_lambda_recent_errors as get_lambda_recent_errors_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
@@ -172,6 +175,19 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
             region=region,
             include_permission_checks=include_permission_checks,
             max_permission_checks=max_permission_checks,
+        )
+
+    @mcp.tool()
+    @audit.tool("explain_lambda_network_access")
+    def explain_lambda_network_access(
+        function_name: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Trace inferred internet and private network reachability for one Lambda."""
+        return explain_lambda_network_access_tool(
+            runtime,
+            function_name=function_name,
+            region=region,
         )
 
     @mcp.tool()

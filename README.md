@@ -18,6 +18,8 @@ Use it to:
 
 - Trace serverless dependencies across Lambda, EventBridge, Step Functions, and
   API Gateway.
+- Trace Lambda VPC egress paths to understand inferred internet and private
+  network reachability.
 - Inspect recent failure signals without exposing secrets or raw payloads.
 - Check permission paths with IAM simulation when available.
 - Give AI clients useful AWS context without handing them a raw SDK shell.
@@ -184,6 +186,10 @@ Explain the dependencies for Lambda <function-name>. Use AWS MCP only.
 ```
 
 ```text
+Trace network access for Lambda <function-name>. Use AWS MCP only.
+```
+
+```text
 Trace the event-driven flow for source aws.s3, detail type Object Created, bucket <bucket-name>, and .csv object keys. Use AWS MCP only.
 ```
 
@@ -192,7 +198,7 @@ Trace the event-driven flow for source aws.s3, detail type Object Created, bucke
 The server includes identity, inventory, dependency, permission-checking, and
 failure-investigation tools for:
 
-- Lambda
+- Lambda, including dependency, failure, permission, and network access tracing
 - Step Functions
 - S3 metadata
 - DynamoDB metadata
