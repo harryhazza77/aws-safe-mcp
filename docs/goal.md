@@ -90,8 +90,6 @@ Prefer the smallest sequence of features that proves the direction.
 
 ## Candidate First Batch
 
-1. First-class local endpoint config.
-2. SQS queue inventory and summary.
-3. SQS queue dependency explanation.
-4. Step Functions execution diagnostics upgrade.
-5. API Gateway route diagnostics.
+1. SQS queue dependency explanation.
+2. Step Functions execution diagnostics upgrade.
+3. API Gateway route diagnostics.

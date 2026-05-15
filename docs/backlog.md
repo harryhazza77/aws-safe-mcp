@@ -23,32 +23,7 @@ Avoid features that:
 
 ## Feature Candidates
 
-### 1. First-Class Local Endpoint Config
-
-Add explicit config/env support for local AWS-compatible endpoints, including a
-global endpoint and optional service-specific overrides.
-
-- Value: makes Floci and MiniStack testing official instead of relying on
-  implicit `AWS_ENDPOINT_URL` behavior.
-- Fixture: no new resources required.
-- Emulator: Floci and MiniStack.
-- Acceptance: tools can use configured local endpoints while preserving account
-  allowlist validation.
-
-### 2. SQS Queue Inventory And Summary
-
-Add `list_sqs_queues` and `get_sqs_queue_summary` for queue metadata such as
-ARN, FIFO status, retention, visibility timeout, DLQ redrive policy presence,
-encryption shape, and message counts where available.
-
-- Value: SQS is common in Lambda and EventBridge paths but has no direct tool.
-- Existing coverage: `explain_event_driven_flow` has private downstream hint
-  helpers that list SQS queues for matching, but there is no public SQS tool.
-- Fixture: baseline standard queue, DLQ, and later FIFO/redrive variants.
-- Emulator: Floci.
-- Acceptance: no message bodies are received or returned.
-
-### 3. SQS Queue Dependency Explanation
+### 1. SQS Queue Dependency Explanation
 
 Add `explain_sqs_queue_dependencies` to summarize queue policies, DLQ/redrive
 relationships, EventBridge targets, Lambda event source mappings, and likely
@@ -62,7 +37,7 @@ producer/consumer permission hints.
 - Emulator: Floci.
 - Acceptance: graph follows existing dependency-tool shape.
 
-### 4. SNS Topic Inventory And Summary
+### 2. SNS Topic Inventory And Summary
 
 Add `list_sns_topics` and `get_sns_topic_summary` for topic ARN, display name,
 encryption shape, subscription counts, delivery policy presence, and policy
@@ -77,7 +52,7 @@ summary.
 - Emulator: Floci first, MiniStack if subscription behavior differs.
 - Acceptance: subscription endpoints are summarized safely.
 
-### 5. SNS Topic Dependency Explanation
+### 3. SNS Topic Dependency Explanation
 
 Add `explain_sns_topic_dependencies` to map topic subscriptions, resource policy
 permission hints, DLQs where visible, and downstream Lambda/SQS targets.
@@ -87,7 +62,7 @@ permission hints, DLQs where visible, and downstream Lambda/SQS targets.
 - Emulator: Floci or MiniStack.
 - Acceptance: no message publishing is performed.
 
-### 6. Step Functions Execution Diagnostics Upgrade
+### 4. Step Functions Execution Diagnostics Upgrade
 
 Improve `investigate_step_function_failure` with clearer failed-state path,
 previous event context, retry/catch hints, and downstream target linkage.
@@ -102,7 +77,7 @@ previous event context, retry/catch hints, and downstream target linkage.
 - Acceptance: output links the failed state to the state machine definition,
   retry/catch shape, and likely downstream target where applicable.
 
-### 7. Step Functions Dependency Coverage For More Integrations
+### 5. Step Functions Dependency Coverage For More Integrations
 
 Extend `explain_step_function_dependencies` for more ASL integrations, such as
 EventBridge `PutEvents`, SQS `SendMessage`, SNS `Publish`, DynamoDB optimized
@@ -113,7 +88,7 @@ integrations, and nested workflow variants.
 - Emulator: MiniStack.
 - Acceptance: extracted targets produce permission hints and graph edges.
 
-### 8. API Gateway Route Diagnostics
+### 6. API Gateway Route Diagnostics
 
 Add a route-centered diagnostic tool that links API Gateway route/method,
 integration, Lambda resource policy, Lambda config, and recent Lambda errors.
@@ -127,7 +102,7 @@ integration, Lambda resource policy, Lambda config, and recent Lambda errors.
 - Emulator: Floci and MiniStack.
 - Acceptance: route diagnostics include warnings for missing invoke permission.
 
-### 9. API Gateway Authorizer Summary
+### 7. API Gateway Authorizer Summary
 
 Summarize REST and HTTP API authorizers, attached routes, identity sources, and
 Lambda authorizer target metadata without returning secrets.
@@ -137,7 +112,7 @@ Lambda authorizer target metadata without returning secrets.
 - Emulator: MiniStack if Floci coverage is incomplete.
 - Acceptance: output shows route-to-authorizer relationships.
 
-### 10. EventBridge Archive, Replay, And Schedule Awareness
+### 8. EventBridge Archive, Replay, And Schedule Awareness
 
 Extend EventBridge tools to summarize archives, replay configuration, Scheduler
 schedules, and rule schedule expressions where visible.
@@ -148,7 +123,7 @@ schedules, and rule schedule expressions where visible.
 - Emulator: Floci first.
 - Acceptance: no events are published or replayed.
 
-### 11. EventBridge Delivery Diagnostics Upgrade
+### 9. EventBridge Delivery Diagnostics Upgrade
 
 Improve `investigate_eventbridge_rule_delivery` with better target-specific
 metrics, retry/DLQ interpretation, disabled rule detection, and policy mismatch
@@ -161,7 +136,7 @@ headlines.
 - Acceptance: diagnostic summary separates configuration, permission, and
   metric signals.
 
-### 12. Lambda Event Source Mapping Diagnostics
+### 10. Lambda Event Source Mapping Diagnostics
 
 Add a focused tool for Lambda event source mappings that summarizes source
 type, state, batch/window settings, last processing result, failure destination,
@@ -172,7 +147,7 @@ and likely permission checks.
 - Emulator: Floci or MiniStack.
 - Acceptance: no queue messages or stream records are read.
 
-### 13. Lambda Alias And Version Summary
+### 11. Lambda Alias And Version Summary
 
 Add a Lambda alias/version summary that reports aliases, weighted routing,
 published versions, provisioned concurrency presence, and policy hints.
@@ -182,7 +157,7 @@ published versions, provisioned concurrency presence, and policy hints.
 - Emulator: MiniStack likely.
 - Acceptance: no code package contents are fetched.
 
-### 14. CloudWatch Alarm Inventory And Diagnostics
+### 12. CloudWatch Alarm Inventory And Diagnostics
 
 Add `list_cloudwatch_alarms` and an alarm summary/diagnostic tool for metric
 alarms tied to Lambda, API Gateway, Step Functions, SQS, or EventBridge.
@@ -192,7 +167,7 @@ alarms tied to Lambda, API Gateway, Step Functions, SQS, or EventBridge.
 - Emulator: MiniStack or Floci, depending on CloudWatch alarm support.
 - Acceptance: output links alarms to likely resource names/ARNs.
 
-### 15. CloudWatch Logs Insights Query Helper
+### 13. CloudWatch Logs Insights Query Helper
 
 Add a bounded Logs Insights helper that starts from a known log group and a
 safe query template, with strict time/result limits and redaction.
@@ -202,7 +177,7 @@ safe query template, with strict time/result limits and redaction.
 - Emulator: MiniStack or Floci if Logs Insights is supported.
 - Acceptance: query text and results are bounded; no broad account-wide query.
 
-### 16. Resource Tag Search And Grouping
+### 14. Resource Tag Search And Grouping
 
 Add a tag-based safe resource search that uses the Resource Groups Tagging API
 where available and falls back to service-specific summaries.
@@ -212,7 +187,7 @@ where available and falls back to service-specific summaries.
 - Emulator: Floci or MiniStack.
 - Acceptance: output is bounded and grouped by service/resource type.
 
-### 17. IAM Role Summary Tool
+### 15. IAM Role Summary Tool
 
 Add a read-only IAM role summary for execution roles, including trust policy
 shape, attached/inline policy counts, service principals, and permission
@@ -227,7 +202,7 @@ boundary presence without returning full policy JSON.
 - Emulator: Floci and MiniStack.
 - Acceptance: full policy documents are not returned.
 
-### 18. KMS Key Metadata Summary
+### 16. KMS Key Metadata Summary
 
 Add KMS key inventory/summary for key state, usage, rotation, aliases, and
 policy availability without decrypting or generating data keys.
@@ -240,7 +215,7 @@ policy availability without decrypting or generating data keys.
 - Emulator: MiniStack or Floci depending on KMS support.
 - Acceptance: no cryptographic material or decrypt operations are used.
 
-### 19. ECS Task And Service Summary
+### 17. ECS Task And Service Summary
 
 Add bounded ECS cluster/service/task definition summaries, focusing on desired
 count, deployment state, task role, execution role, containers, log groups, and
@@ -251,7 +226,7 @@ load balancer wiring.
 - Emulator: MiniStack likely.
 - Acceptance: no container env values or secrets are returned.
 
-### 20. Cross-Service Incident Brief
+### 18. Cross-Service Incident Brief
 
 Add an incident-brief tool that accepts a resource name fragment and produces a
 compact investigation bundle from existing safe tools: matching resources,
@@ -274,12 +249,15 @@ This backlog was cross-checked against the current public MCP tool registrations
 and tool modules. Existing public tools already cover:
 
 - Identity: `aws_auth_status`, `aws_identity`.
+- Runtime configuration: global `endpoint_url` and service-specific endpoint
+  overrides.
 - Lambda: listing, summary, recent errors, failure investigation, dependency
   graph, network access, and role permission path checks.
 - Step Functions: listing, execution summary, failure investigation, dependency
   graph, ASL parsing, role summary, and permission hints/checks.
 - S3: bucket listing, object metadata listing, and bucket summary.
 - DynamoDB: table listing and table summary.
+- SQS: queue listing and queue summary without receiving messages.
 - CloudWatch Logs: log group listing and bounded filter search.
 - API Gateway: API listing, summary, route/integration dependency graph, and
   Lambda resource-policy checks.
@@ -293,13 +271,11 @@ existing tools into higher-value diagnostics.
 
 ## Suggested Order
 
-1. First-class local endpoint config.
-2. SQS queue inventory and summary.
-3. SQS queue dependency explanation.
-4. Step Functions execution diagnostics upgrade.
-5. API Gateway route diagnostics.
-6. SNS topic inventory and summary.
-7. SNS topic dependency explanation.
-8. Lambda event source mapping diagnostics.
-9. EventBridge delivery diagnostics upgrade.
-10. Cross-service incident brief.
+1. SQS queue dependency explanation.
+2. Step Functions execution diagnostics upgrade.
+3. API Gateway route diagnostics.
+4. SNS topic inventory and summary.
+5. SNS topic dependency explanation.
+6. Lambda event source mapping diagnostics.
+7. EventBridge delivery diagnostics upgrade.
+8. Cross-service incident brief.
