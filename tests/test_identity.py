@@ -29,6 +29,30 @@ class FakeSession:
         return FakeStsClient()
 
 
+class RecordingClient:
+    def __init__(self, service_name: str) -> None:
+        self.service_name = service_name
+
+    def get_caller_identity(self) -> dict[str, str]:
+        return {
+            "Account": "123456789012",
+            "Arn": "arn:aws:sts::123456789012:assumed-role/dev-role/session",
+            "UserId": "AROATEST:session",
+        }
+
+
+class RecordingSession:
+    client_calls: list[dict[str, Any]] = []
+
+    def __init__(self, profile_name: str | None = None, region_name: str | None = None) -> None:
+        self.profile_name = profile_name
+        self.region_name = region_name
+
+    def client(self, service_name: str, **kwargs: Any) -> RecordingClient:
+        type(self).client_calls.append({"service_name": service_name, **kwargs})
+        return RecordingClient(service_name)
+
+
 class CountingSession:
     calls = 0
     fail_after = 1
@@ -90,6 +114,55 @@ def test_aws_identity_reports_validated_session(monkeypatch: pytest.MonkeyPatch)
         "region": "eu-west-2",
         "readonly": True,
     }
+
+
+def test_runtime_uses_configured_global_endpoint_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aws_safe_mcp.auth as auth
+
+    RecordingSession.client_calls = []
+    monkeypatch.setattr(auth.boto3, "Session", RecordingSession)
+    runtime = AwsRuntime(
+        config=AwsSafeConfig(
+            allowed_account_ids=["123456789012"],
+            endpoint_url="http://127.0.0.1:4566",
+        ),
+        profile=None,
+        region="eu-west-2",
+    )
+
+    runtime.client("s3")
+
+    assert [call["service_name"] for call in RecordingSession.client_calls] == ["sts", "sts", "s3"]
+    assert [call["endpoint_url"] for call in RecordingSession.client_calls] == [
+        "http://127.0.0.1:4566",
+        "http://127.0.0.1:4566",
+        "http://127.0.0.1:4566",
+    ]
+
+
+def test_runtime_uses_service_endpoint_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aws_safe_mcp.auth as auth
+
+    RecordingSession.client_calls = []
+    monkeypatch.setattr(auth.boto3, "Session", RecordingSession)
+    runtime = AwsRuntime(
+        config=AwsSafeConfig(
+            allowed_account_ids=["123456789012"],
+            endpoint_url="http://127.0.0.1:4566",
+            service_endpoint_urls={"s3": "http://127.0.0.1:4572"},
+        ),
+        profile=None,
+        region="eu-west-2",
+    )
+
+    runtime.client("s3")
+
+    assert RecordingSession.client_calls[-1]["service_name"] == "s3"
+    assert RecordingSession.client_calls[-1]["endpoint_url"] == "http://127.0.0.1:4572"
 
 
 def test_aws_auth_status_reports_active_role(monkeypatch: pytest.MonkeyPatch) -> None:

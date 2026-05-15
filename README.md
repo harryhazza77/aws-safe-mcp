@@ -149,6 +149,24 @@ allowed_account_ids:
 readonly: true
 ```
 
+For local AWS-compatible emulators, configure an endpoint explicitly:
+
+```yaml
+allowed_account_ids:
+  - "000000000000"
+
+readonly: true
+
+endpoint_url: http://127.0.0.1:4566
+```
+
+Use `service_endpoint_urls` only when a service needs a different endpoint:
+
+```yaml
+service_endpoint_urls:
+  s3: http://127.0.0.1:4572
+```
+
 Run the server with a non-production AWS profile:
 
 ```bash

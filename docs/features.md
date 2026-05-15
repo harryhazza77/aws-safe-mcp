@@ -140,15 +140,13 @@ Related tools:
 
 ## Local Emulator Workflows
 
-The main package can be pointed at local AWS-compatible emulators through the
-standard botocore `AWS_ENDPOINT_URL` environment variable. The companion
-fixture repo at `../aws-sdk-mcp-tf` provides Terraform scenarios for Floci and
-MiniStack.
+The main package can be pointed at local AWS-compatible emulators with
+`endpoint_url` in the config file, plus optional `service_endpoint_urls`
+overrides. The companion fixture repo at `../aws-sdk-mcp-tf` provides Terraform
+scenarios for MiniStack.
 
 Current verified local paths:
 
-- Floci on `http://127.0.0.1:4567` for Lambda, S3, SQS, DynamoDB, CloudWatch
-  Logs, EventBridge, and API Gateway fixtures.
 - MiniStack on `http://127.0.0.1:4566` for the same baseline plus Step
   Functions fixtures.
 

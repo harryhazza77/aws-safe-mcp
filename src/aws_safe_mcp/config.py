@@ -36,6 +36,8 @@ class AwsSafeConfig(BaseModel):
     redaction: RedactionConfig = Field(default_factory=RedactionConfig)
     max_since_minutes: int = Field(default=1440, ge=1, le=10080)
     max_results: int = Field(default=100, ge=1, le=1000)
+    endpoint_url: str | None = None
+    service_endpoint_urls: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("allowed_account_ids")
     @classmethod
@@ -51,10 +53,28 @@ class AwsSafeConfig(BaseModel):
             raise ValueError("readonly must be true in v1")
         return self
 
+    @field_validator("endpoint_url")
+    @classmethod
+    def endpoint_url_must_be_http(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_http_url(value, "endpoint_url")
+
+    @field_validator("service_endpoint_urls")
+    @classmethod
+    def service_endpoint_urls_must_be_http(cls, values: dict[str, str]) -> dict[str, str]:
+        return {
+            _require_service_name(key): _require_http_url(value, f"service_endpoint_urls.{key}")
+            for key, value in values.items()
+        }
+
     def require_account_allowed(self, account_id: str) -> str:
         if account_id not in self.allowed_account_ids:
             raise ConfigError(f"AWS account {account_id!r} is not allowed by config")
         return account_id
+
+    def endpoint_for_service(self, service_name: str) -> str | None:
+        return self.service_endpoint_urls.get(service_name) or self.endpoint_url
 
 
 def load_config(path: str | Path) -> AwsSafeConfig:
@@ -87,3 +107,15 @@ def _parse_config(raw_text: str, suffix: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ConfigError("Config file must contain a YAML or JSON object")
     return data
+
+
+def _require_http_url(value: str, field_name: str) -> str:
+    if not value.startswith(("http://", "https://")):
+        raise ValueError(f"{field_name} must start with http:// or https://")
+    return value
+
+
+def _require_service_name(value: str) -> str:
+    if not value.strip():
+        raise ValueError("service_endpoint_urls keys must be non-empty service names")
+    return value.strip()
