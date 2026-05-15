@@ -13,6 +13,8 @@ the deeper operational and development details.
 ## Reference
 
 - [Tool catalog](tools.md): full list of MCP tools, inputs, and output contracts.
+- [Lambda network access contract](lambda-network-access.md): proposed response
+  shape and scenarios for Lambda internet/intranet reachability tracing.
 - [Architecture](architecture.md): design decisions, runtime flow, and extension
   direction.
 - [Limitations](limitations.md): known safety and correctness boundaries.

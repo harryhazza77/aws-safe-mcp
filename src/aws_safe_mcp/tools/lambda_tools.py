@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -283,6 +284,63 @@ def explain_lambda_dependencies(
     }
 
 
+def explain_lambda_network_access(
+    runtime: AwsRuntime,
+    function_name: str,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_name = require_lambda_name(function_name)
+    lambda_client = runtime.client("lambda", region=resolved_region)
+
+    try:
+        config = lambda_client.get_function_configuration(FunctionName=required_name)
+    except (BotoCoreError, ClientError) as exc:
+        raise normalize_aws_error(exc, "lambda.GetFunctionConfiguration") from exc
+
+    vpc_config = config.get("VpcConfig", {})
+    subnet_ids = list(vpc_config.get("SubnetIds", [])) if isinstance(vpc_config, dict) else []
+    security_group_ids = (
+        list(vpc_config.get("SecurityGroupIds", [])) if isinstance(vpc_config, dict) else []
+    )
+    vpc_id = str(vpc_config.get("VpcId") or "") if isinstance(vpc_config, dict) else ""
+
+    if not vpc_id:
+        return _lambda_non_vpc_network_access(required_name, resolved_region, config)
+
+    ec2_client = runtime.client("ec2", region=resolved_region)
+    try:
+        subnets = ec2_client.describe_subnets(SubnetIds=subnet_ids).get("Subnets", [])
+        security_groups = ec2_client.describe_security_groups(GroupIds=security_group_ids).get(
+            "SecurityGroups", []
+        )
+        route_tables = ec2_client.describe_route_tables(
+            Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+        ).get("RouteTables", [])
+        network_acls = ec2_client.describe_network_acls(
+            Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+        ).get("NetworkAcls", [])
+        endpoints = ec2_client.describe_vpc_endpoints(
+            Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+        ).get("VpcEndpoints", [])
+    except (BotoCoreError, ClientError) as exc:
+        raise normalize_aws_error(exc, "ec2.DescribeLambdaNetworkAccess") from exc
+
+    return _lambda_vpc_network_access(
+        function_name=required_name,
+        region=resolved_region,
+        config=config,
+        vpc_id=vpc_id,
+        subnet_ids=subnet_ids,
+        security_group_ids=security_group_ids,
+        subnets=subnets,
+        security_groups=security_groups,
+        route_tables=route_tables,
+        network_acls=network_acls,
+        endpoints=endpoints,
+    )
+
+
 def check_lambda_permission_path(
     runtime: AwsRuntime,
     function_name: str,
@@ -365,6 +423,478 @@ def _lambda_summary(item: dict[str, Any], max_string_length: int) -> dict[str, A
         "state": item.get("State"),
         "state_reason": truncate_optional(item.get("StateReason"), max_string_length),
         "last_update_status": item.get("LastUpdateStatus"),
+    }
+
+
+def _lambda_non_vpc_network_access(
+    function_name: str,
+    region: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "resource_type": "lambda",
+        "name": function_name,
+        "arn": config.get("FunctionArn"),
+        "region": region,
+        "summary": {
+            "network_mode": "aws_managed",
+            "internet_access": "yes",
+            "private_network_access": "not_applicable",
+            "aws_private_service_access": "unknown",
+            "main_risks": [],
+        },
+        "scope": {
+            "analysis_type": "static_configuration",
+            "protocols": ["tcp", "udp", "icmp", "-1"],
+            "ip_families": ["ipv4", "ipv6"],
+        },
+        "network_context": {
+            "vpc_id": None,
+            "subnet_ids": [],
+            "security_group_ids": [],
+        },
+        "egress": {
+            "internet": {
+                "verdict": "yes",
+                "ipv4": "reachable",
+                "ipv6": "unknown",
+                "via": [],
+            },
+            "private_networks": [],
+            "aws_services": [],
+            "blocked_or_unknown": [],
+        },
+        "controls": {
+            "security_groups": [],
+            "route_tables": [],
+            "network_acls": [],
+            "endpoints": [],
+        },
+        "paths": [],
+        "warnings": [
+            "Lambda is not VPC-attached; security groups and subnet routes do not apply.",
+            "Static analysis cannot prove application-layer destinations or DNS behavior.",
+        ],
+        "confidence": "medium",
+    }
+
+
+def _lambda_vpc_network_access(
+    *,
+    function_name: str,
+    region: str,
+    config: dict[str, Any],
+    vpc_id: str,
+    subnet_ids: list[str],
+    security_group_ids: list[str],
+    subnets: list[dict[str, Any]],
+    security_groups: list[dict[str, Any]],
+    route_tables: list[dict[str, Any]],
+    network_acls: list[dict[str, Any]],
+    endpoints: list[dict[str, Any]],
+) -> dict[str, Any]:
+    subnet_route_tables = {
+        subnet_id: _route_table_for_subnet(subnet_id, route_tables) for subnet_id in subnet_ids
+    }
+    paths: list[dict[str, Any]] = []
+    blocked_or_unknown: list[dict[str, Any]] = []
+    private_networks: list[dict[str, Any]] = []
+    warnings = ["Static analysis cannot prove application-layer destinations or DNS behavior."]
+
+    for subnet_id in subnet_ids:
+        route_table = subnet_route_tables.get(subnet_id)
+        default_route = _default_ipv4_route(route_table)
+        internet_path = _internet_path_for_subnet(
+            subnet_id=subnet_id,
+            route_table=route_table,
+            default_route=default_route,
+            security_groups=security_groups,
+        )
+        paths.append(internet_path)
+        if internet_path["verdict"] != "reachable":
+            blocked_or_unknown.append(
+                {
+                    "destination": "0.0.0.0/0",
+                    "from_subnet": subnet_id,
+                    "reason": internet_path["limited_by"][0]
+                    if internet_path["limited_by"]
+                    else "unknown",
+                }
+            )
+
+        for private_path in _private_paths_for_subnet(
+            subnet_id=subnet_id,
+            route_table=route_table,
+            security_groups=security_groups,
+        ):
+            paths.append(private_path)
+            private_networks.append(
+                {
+                    "cidr": private_path["destination"],
+                    "via": private_path["via"][-1] if private_path["via"] else None,
+                    "verdict": private_path["verdict"],
+                    "confidence": private_path["confidence"],
+                }
+            )
+
+    internet_verdict = _summary_verdict(
+        path["verdict"] for path in paths if path["destination_class"] == "internet"
+    )
+    private_verdict = _summary_verdict(
+        path["verdict"] for path in paths if path["destination_class"] == "private_network"
+    )
+    aws_services = _aws_service_endpoint_summaries(endpoints)
+    aws_service_verdict = "yes" if aws_services else "no"
+    main_risks = _lambda_network_risks(paths)
+
+    return {
+        "resource_type": "lambda",
+        "name": function_name,
+        "arn": config.get("FunctionArn"),
+        "region": region,
+        "summary": {
+            "network_mode": "vpc",
+            "internet_access": internet_verdict,
+            "private_network_access": private_verdict,
+            "aws_private_service_access": aws_service_verdict,
+            "main_risks": main_risks,
+        },
+        "scope": {
+            "analysis_type": "static_configuration",
+            "protocols": ["tcp", "udp", "icmp", "-1"],
+            "ip_families": ["ipv4", "ipv6"],
+        },
+        "network_context": {
+            "vpc_id": vpc_id,
+            "subnet_ids": subnet_ids,
+            "security_group_ids": security_group_ids,
+        },
+        "egress": {
+            "internet": {
+                "verdict": internet_verdict,
+                "ipv4": _internet_ipv4_verdict(internet_verdict),
+                "ipv6": "not_evaluated",
+                "via": _internet_route_targets(paths),
+            },
+            "private_networks": private_networks,
+            "aws_services": aws_services,
+            "blocked_or_unknown": blocked_or_unknown,
+        },
+        "controls": {
+            "security_groups": [_security_group_summary(group) for group in security_groups],
+            "route_tables": [_route_table_summary(table) for table in route_tables],
+            "network_acls": [_network_acl_summary(acl) for acl in network_acls],
+            "endpoints": aws_services,
+        },
+        "paths": paths,
+        "warnings": warnings,
+        "confidence": _lambda_network_confidence(paths, network_acls),
+    }
+
+
+def _internet_path_for_subnet(
+    *,
+    subnet_id: str,
+    route_table: dict[str, Any] | None,
+    default_route: dict[str, Any] | None,
+    security_groups: list[dict[str, Any]],
+) -> dict[str, Any]:
+    allowed_by = _matching_egress_rules(security_groups, "0.0.0.0/0", 443)
+    via = _route_via(route_table, default_route)
+    limited_by: list[str] = []
+    verdict = "reachable"
+    confidence = "high"
+
+    if not allowed_by:
+        verdict = "blocked"
+        limited_by.append("no security group egress rule allows tcp/443 to 0.0.0.0/0")
+    if default_route is None:
+        verdict = "blocked"
+        limited_by.append(f"{_route_table_id(route_table)} has no ipv4 default route")
+    elif default_route.get("NatGatewayId"):
+        pass
+    elif str(default_route.get("GatewayId") or "").startswith("igw-"):
+        verdict = "blocked"
+        limited_by.append("Lambda VPC ENIs do not receive public IPv4 addresses for IGW egress")
+    else:
+        verdict = "unknown" if verdict == "reachable" else verdict
+        confidence = "medium"
+        limited_by.append("default route target is not classified as NAT internet egress")
+
+    return _network_path(
+        destination_class="internet",
+        destination="0.0.0.0/0",
+        verdict=verdict,
+        from_subnet=subnet_id,
+        via=via,
+        allowed_by=allowed_by,
+        limited_by=limited_by,
+        confidence=confidence,
+    )
+
+
+def _private_paths_for_subnet(
+    *,
+    subnet_id: str,
+    route_table: dict[str, Any] | None,
+    security_groups: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not route_table:
+        return []
+
+    paths: list[dict[str, Any]] = []
+    for route in route_table.get("Routes", []):
+        destination = str(route.get("DestinationCidrBlock") or "")
+        if not destination or destination == "0.0.0.0/0" or not _is_private_cidr(destination):
+            continue
+        allowed_by = _matching_egress_rules(security_groups, destination, 443)
+        limited_by = [] if allowed_by else ["no security group egress rule allows tcp/443"]
+        verdict = "reachable" if allowed_by else "blocked"
+        confidence = "high"
+        if route.get("TransitGatewayId") or route.get("GatewayId") or route.get("InstanceId"):
+            confidence = "medium"
+        paths.append(
+            _network_path(
+                destination_class="private_network",
+                destination=destination,
+                verdict=verdict,
+                from_subnet=subnet_id,
+                via=_route_via(route_table, route) or ["local-vpc"],
+                allowed_by=allowed_by,
+                limited_by=limited_by,
+                confidence=confidence,
+            )
+        )
+    return paths
+
+
+def _network_path(
+    *,
+    destination_class: str,
+    destination: str,
+    verdict: str,
+    from_subnet: str,
+    via: list[str],
+    allowed_by: list[str],
+    limited_by: list[str],
+    confidence: str,
+) -> dict[str, Any]:
+    return {
+        "destination_class": destination_class,
+        "destination": destination,
+        "ip_family": "ipv4",
+        "protocol": "tcp",
+        "ports": [443],
+        "verdict": verdict,
+        "from_subnet": from_subnet,
+        "via": via,
+        "allowed_by": allowed_by,
+        "limited_by": limited_by,
+        "confidence": confidence,
+    }
+
+
+def _route_table_for_subnet(
+    subnet_id: str,
+    route_tables: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    main_route_table = None
+    for route_table in route_tables:
+        for association in route_table.get("Associations", []):
+            if association.get("SubnetId") == subnet_id:
+                return route_table
+            if association.get("Main"):
+                main_route_table = route_table
+    return main_route_table
+
+
+def _default_ipv4_route(route_table: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not route_table:
+        return None
+    for route in route_table.get("Routes", []):
+        if isinstance(route, dict) and route.get("DestinationCidrBlock") == "0.0.0.0/0":
+            return route
+    return None
+
+
+def _matching_egress_rules(
+    security_groups: list[dict[str, Any]],
+    destination_cidr: str,
+    port: int,
+) -> list[str]:
+    matches: list[str] = []
+    for group in security_groups:
+        group_id = str(group.get("GroupId") or "unknown-security-group")
+        for rule in group.get("IpPermissionsEgress", []):
+            if not _permission_allows_port(rule, port):
+                continue
+            for ip_range in rule.get("IpRanges", []):
+                cidr = str(ip_range.get("CidrIp") or "")
+                if cidr and _cidr_allows_destination(cidr, destination_cidr):
+                    matches.append(f"{group_id} {rule.get('IpProtocol')} {cidr}")
+    return matches
+
+
+def _permission_allows_port(permission: dict[str, Any], port: int) -> bool:
+    protocol = str(permission.get("IpProtocol") or "")
+    if protocol == "-1":
+        return True
+    if protocol not in {"tcp", "6"}:
+        return False
+    from_port = permission.get("FromPort")
+    to_port = permission.get("ToPort")
+    if from_port is None or to_port is None:
+        return True
+    return int(from_port) <= port <= int(to_port)
+
+
+def _cidr_allows_destination(rule_cidr: str, destination_cidr: str) -> bool:
+    try:
+        rule_network = ipaddress.ip_network(rule_cidr, strict=False)
+        destination_network = ipaddress.ip_network(destination_cidr, strict=False)
+    except ValueError:
+        return rule_cidr == destination_cidr
+    if isinstance(rule_network, ipaddress.IPv4Network) and isinstance(
+        destination_network, ipaddress.IPv4Network
+    ):
+        return destination_network.subnet_of(rule_network)
+    if isinstance(rule_network, ipaddress.IPv6Network) and isinstance(
+        destination_network, ipaddress.IPv6Network
+    ):
+        return destination_network.subnet_of(rule_network)
+    return False
+
+
+def _is_private_cidr(cidr: str) -> bool:
+    try:
+        network = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return False
+    return network.is_private
+
+
+def _route_via(
+    route_table: dict[str, Any] | None,
+    route: dict[str, Any] | None,
+) -> list[str]:
+    if not route:
+        return []
+    via = [_route_table_id(route_table)]
+    for key in [
+        "NatGatewayId",
+        "GatewayId",
+        "TransitGatewayId",
+        "VpcPeeringConnectionId",
+        "InstanceId",
+        "NetworkInterfaceId",
+        "EgressOnlyInternetGatewayId",
+    ]:
+        value = route.get(key)
+        if value and value != "local":
+            via.append(str(value))
+    return via
+
+
+def _route_table_id(route_table: dict[str, Any] | None) -> str:
+    if not route_table:
+        return "unknown-route-table"
+    return str(route_table.get("RouteTableId") or "unknown-route-table")
+
+
+def _summary_verdict(verdicts: Any) -> str:
+    values = list(verdicts)
+    if not values:
+        return "no"
+    if all(value == "reachable" for value in values):
+        return "yes"
+    if all(value == "blocked" for value in values):
+        return "no"
+    if any(value == "unknown" for value in values):
+        return "unknown"
+    return "partial"
+
+
+def _internet_ipv4_verdict(summary_verdict: str) -> str:
+    if summary_verdict == "yes":
+        return "reachable"
+    if summary_verdict == "no":
+        return "blocked"
+    return summary_verdict
+
+
+def _internet_route_targets(paths: list[dict[str, Any]]) -> list[str]:
+    targets: list[str] = []
+    for path in paths:
+        if path["destination_class"] != "internet":
+            continue
+        for target in path["via"][1:]:
+            if target not in targets:
+                targets.append(target)
+    return targets
+
+
+def _aws_service_endpoint_summaries(endpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for endpoint in endpoints:
+        service_name = str(endpoint.get("ServiceName") or "")
+        service = service_name.rsplit(".", maxsplit=1)[-1] if service_name else None
+        summaries.append(
+            {
+                "service": service,
+                "service_name": service_name or None,
+                "endpoint_type": endpoint.get("VpcEndpointType"),
+                "via": endpoint.get("VpcEndpointId"),
+                "verdict": "reachable" if endpoint.get("State") == "available" else "unknown",
+            }
+        )
+    return summaries
+
+
+def _lambda_network_risks(paths: list[dict[str, Any]]) -> list[str]:
+    risks: list[str] = []
+    if any("0.0.0.0/0" in allowed for path in paths for allowed in path["allowed_by"]):
+        risks.append("wide_ipv4_egress")
+    internet_verdicts = {
+        path["verdict"] for path in paths if path["destination_class"] == "internet"
+    }
+    if internet_verdicts == {"reachable", "blocked"}:
+        risks.append("subnet_route_mismatch")
+    return risks
+
+
+def _lambda_network_confidence(
+    paths: list[dict[str, Any]],
+    network_acls: list[dict[str, Any]],
+) -> str:
+    if any(path["confidence"] == "low" for path in paths):
+        return "low"
+    if network_acls or any(path["confidence"] == "medium" for path in paths):
+        return "medium"
+    return "high"
+
+
+def _security_group_summary(group: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "group_id": group.get("GroupId"),
+        "group_name": group.get("GroupName"),
+        "egress_rule_count": len(group.get("IpPermissionsEgress", [])),
+    }
+
+
+def _route_table_summary(route_table: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "route_table_id": route_table.get("RouteTableId"),
+        "route_count": len(route_table.get("Routes", [])),
+        "association_count": len(route_table.get("Associations", [])),
+    }
+
+
+def _network_acl_summary(acl: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "network_acl_id": acl.get("NetworkAclId"),
+        "entry_count": len(acl.get("Entries", [])),
+        "association_count": len(acl.get("Associations", [])),
+        "verdict": "not_evaluated",
     }
 
 

@@ -100,6 +100,22 @@ Inputs:
 - `include_permission_checks` optional, default `true`
 - `max_permission_checks` optional
 
+### `explain_lambda_network_access`
+
+Traces inferred internet and private network reachability for one Lambda from
+static AWS configuration. For VPC Lambdas, it inspects Lambda VPC config,
+subnets, security groups, route tables, network ACLs, and VPC endpoints. For
+non-VPC Lambdas, it reports AWS-managed runtime networking. The result uses the
+contract in [Lambda network access contract](lambda-network-access.md).
+
+This tool reports network-layer possibility, not proof that function code
+actually calls a destination.
+
+Inputs:
+
+- `function_name` required
+- `region` optional
+
 ### `check_lambda_permission_path`
 
 Checks whether one Lambda execution role appears allowed to perform one IAM
