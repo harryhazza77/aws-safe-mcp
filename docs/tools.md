@@ -233,6 +233,31 @@ Inputs:
 - `table_name` required
 - `region` optional
 
+## SQS
+
+### `list_sqs_queues`
+
+Lists SQS queue URLs visible to the active AWS credentials. It does not receive
+messages.
+
+Inputs:
+
+- `region` optional
+- `name_prefix` optional
+- `max_results` optional
+
+### `get_sqs_queue_summary`
+
+Summarizes one SQS queue using metadata APIs only. Includes queue ARN, timing
+attributes, approximate message counts, DLQ/redrive configuration, encryption
+shape, and queue policy statement count. It does not receive messages or return
+message bodies.
+
+Inputs:
+
+- `queue_url` required
+- `region` optional
+
 ## CloudWatch Logs
 
 ### `list_cloudwatch_log_groups`

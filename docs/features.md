@@ -104,6 +104,9 @@ Related tools:
 - List DynamoDB table names without scanning, querying, or reading items.
 - Summarize DynamoDB table metadata such as billing mode, keys, indexes,
   streams, server-side encryption, and point-in-time recovery.
+- List SQS queues and summarize queue metadata without receiving messages.
+- Inspect queue timing attributes, approximate message counts, DLQ/redrive
+  configuration, encryption shape, and queue policy statement count.
 
 Related tools:
 
@@ -112,6 +115,8 @@ Related tools:
 - `get_s3_bucket_summary`
 - `list_dynamodb_tables`
 - `dynamodb_table_summary`
+- `list_sqs_queues`
+- `get_sqs_queue_summary`
 
 ## Logs And Failure Signals
 

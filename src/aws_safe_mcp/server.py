@@ -56,6 +56,8 @@ from aws_safe_mcp.tools.resource_search import search_aws_resources as search_aw
 from aws_safe_mcp.tools.s3 import get_s3_bucket_summary as get_s3_bucket_summary_tool
 from aws_safe_mcp.tools.s3 import list_s3_buckets as list_s3_buckets_tool
 from aws_safe_mcp.tools.s3 import list_s3_objects as list_s3_objects_tool
+from aws_safe_mcp.tools.sqs import get_sqs_queue_summary as get_sqs_queue_summary_tool
+from aws_safe_mcp.tools.sqs import list_sqs_queues as list_sqs_queues_tool
 from aws_safe_mcp.tools.stepfunctions import (
     explain_step_function_dependencies as explain_step_function_dependencies_tool,
 )
@@ -77,6 +79,7 @@ def create_server(runtime: AwsRuntime) -> FastMCP:
     _register_lambda_tools(mcp, audit, runtime)
     _register_step_functions_tools(mcp, audit, runtime)
     _register_s3_tools(mcp, audit, runtime)
+    _register_sqs_tools(mcp, audit, runtime)
     _register_dynamodb_tools(mcp, audit, runtime)
     _register_cloudwatch_tools(mcp, audit, runtime)
     _register_api_gateway_tools(mcp, audit, runtime)
@@ -335,6 +338,36 @@ def _register_dynamodb_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRunti
         return dynamodb_table_summary_tool(
             runtime,
             table_name=table_name,
+            region=region,
+        )
+
+
+def _register_sqs_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -> None:
+    @mcp.tool()
+    @audit.tool("list_sqs_queues")
+    def list_sqs_queues(
+        region: str | None = None,
+        name_prefix: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """List SQS queues without receiving messages."""
+        return list_sqs_queues_tool(
+            runtime,
+            region=region,
+            name_prefix=name_prefix,
+            max_results=max_results,
+        )
+
+    @mcp.tool()
+    @audit.tool("get_sqs_queue_summary")
+    def get_sqs_queue_summary(
+        queue_url: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Summarize SQS queue metadata without receiving messages."""
+        return get_sqs_queue_summary_tool(
+            runtime,
+            queue_url=queue_url,
             region=region,
         )
 

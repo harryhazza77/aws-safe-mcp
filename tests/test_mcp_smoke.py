@@ -71,6 +71,8 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "list_s3_buckets",
         "get_s3_bucket_summary",
         "list_s3_objects",
+        "list_sqs_queues",
+        "get_sqs_queue_summary",
         "list_dynamodb_tables",
         "dynamodb_table_summary",
         "list_cloudwatch_log_groups",
