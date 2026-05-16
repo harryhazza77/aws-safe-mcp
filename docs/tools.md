@@ -443,6 +443,18 @@ Inputs:
 - `bucket` required
 - `region` optional
 
+### `check_s3_notification_destination_readiness`
+
+Checks S3 notification destinations for Lambda, SQS, and SNS readiness. It
+summarizes destination ARNs, event names, filter rules, and destination policy
+trust for `s3.amazonaws.com`. It does not read objects, return object bodies, or
+return bucket/resource policy documents verbatim.
+
+Inputs:
+
+- `bucket` required
+- `region` optional
+
 ## DynamoDB
 
 ### `list_dynamodb_tables`

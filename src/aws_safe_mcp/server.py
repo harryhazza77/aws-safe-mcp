@@ -144,6 +144,9 @@ from aws_safe_mcp.tools.resource_search import (
 from aws_safe_mcp.tools.resource_search import (
     search_aws_resources_by_tag as search_aws_resources_by_tag_tool,
 )
+from aws_safe_mcp.tools.s3 import (
+    check_s3_notification_destination_readiness as check_s3_notification_destination_readiness_tool,
+)
 from aws_safe_mcp.tools.s3 import get_s3_bucket_summary as get_s3_bucket_summary_tool
 from aws_safe_mcp.tools.s3 import list_s3_buckets as list_s3_buckets_tool
 from aws_safe_mcp.tools.s3 import list_s3_objects as list_s3_objects_tool
@@ -687,6 +690,19 @@ def _register_s3_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) ->
     ) -> dict[str, object]:
         """Summarize S3 bucket metadata without reading object contents."""
         return get_s3_bucket_summary_tool(
+            runtime,
+            bucket=bucket,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("check_s3_notification_destination_readiness")
+    def check_s3_notification_destination_readiness(
+        bucket: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Check S3 notification destinations without reading object bodies."""
+        return check_s3_notification_destination_readiness_tool(
             runtime,
             bucket=bucket,
             region=region,

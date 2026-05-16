@@ -227,6 +227,9 @@ Related tools:
 - List S3 buckets and S3 object metadata without fetching object bodies.
 - Summarize S3 bucket location, versioning, encryption, public access block,
   lifecycle, logging, and notification counts.
+- Check S3 notification destination readiness for Lambda, SQS, and SNS targets,
+  including filter rules and destination policy trust without reading objects or
+  returning bucket policies verbatim.
 - List DynamoDB table names without scanning, querying, or reading items.
 - Summarize DynamoDB table metadata such as billing mode, keys, indexes,
   streams, server-side encryption, and point-in-time recovery.
@@ -257,6 +260,7 @@ Related tools:
 - `list_s3_buckets`
 - `list_s3_objects`
 - `get_s3_bucket_summary`
+- `check_s3_notification_destination_readiness`
 - `list_dynamodb_tables`
 - `dynamodb_table_summary`
 - `check_dynamodb_stream_lambda_readiness`

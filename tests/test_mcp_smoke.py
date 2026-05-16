@@ -87,6 +87,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "explain_step_function_dependencies",
         "list_s3_buckets",
         "get_s3_bucket_summary",
+        "check_s3_notification_destination_readiness",
         "list_s3_objects",
         "list_sqs_queues",
         "get_sqs_queue_summary",
