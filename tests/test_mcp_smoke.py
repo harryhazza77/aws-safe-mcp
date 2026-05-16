@@ -58,6 +58,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "aws_auth_status",
         "aws_identity",
         "get_iam_role_summary",
+        "explain_iam_simulation_denial",
         "list_kms_keys",
         "get_kms_key_summary",
         "check_kms_dependent_path",

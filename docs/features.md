@@ -26,10 +26,13 @@ Related tools:
   policy documents.
 - Report trust-policy shape, service/AWS/federated principals, attached and
   inline policy counts/names, and permission-boundary presence.
+- Explain IAM simulation denies with matched statement metadata, missing
+  context keys, and likely policy layer without returning raw policy documents.
 
 Related tools:
 
 - `get_iam_role_summary`
+- `explain_iam_simulation_denial`
 
 ## KMS Inspection
 

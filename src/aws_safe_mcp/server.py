@@ -57,6 +57,9 @@ from aws_safe_mcp.tools.eventbridge import (
 from aws_safe_mcp.tools.eventbridge import (
     list_eventbridge_rules as list_eventbridge_rules_tool,
 )
+from aws_safe_mcp.tools.iam import (
+    explain_iam_simulation_denial as explain_iam_simulation_denial_tool,
+)
 from aws_safe_mcp.tools.iam import get_iam_role_summary as get_iam_role_summary_tool
 from aws_safe_mcp.tools.identity import aws_auth_status as get_aws_auth_status
 from aws_safe_mcp.tools.identity import aws_identity as get_aws_identity
@@ -214,6 +217,23 @@ def _register_iam_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
         return get_iam_role_summary_tool(
             runtime,
             role_name=role_name,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("explain_iam_simulation_denial")
+    def explain_iam_simulation_denial(
+        principal_arn: str,
+        action: str,
+        resource_arn: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Explain IAM simulation denies without returning raw policy documents."""
+        return explain_iam_simulation_denial_tool(
+            runtime,
+            principal_arn=principal_arn,
+            action=action,
+            resource_arn=resource_arn,
             region=region,
         )
 

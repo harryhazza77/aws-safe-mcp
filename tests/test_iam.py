@@ -8,7 +8,7 @@ from botocore.exceptions import ClientError
 
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
-from aws_safe_mcp.tools.iam import get_iam_role_summary
+from aws_safe_mcp.tools.iam import explain_iam_simulation_denial, get_iam_role_summary
 
 
 class FakePaginator:
@@ -65,6 +65,24 @@ class FakeIamClient:
         if operation_name == "list_role_policies":
             return FakePaginator([{"PolicyNames": ["InlineDynamoAccess"]}])
         raise AssertionError(operation_name)
+
+    def simulate_principal_policy(self, **_: Any) -> dict[str, Any]:
+        return {
+            "EvaluationResults": [
+                {
+                    "EvalDecision": "explicitDeny",
+                    "MatchedStatements": [
+                        {
+                            "SourcePolicyId": "InlineDeny",
+                            "SourcePolicyType": "IAM Policy",
+                            "StartPosition": {"Line": 2, "Column": 3},
+                            "EndPosition": {"Line": 8, "Column": 4},
+                        }
+                    ],
+                    "MissingContextValues": ["aws:SourceVpc"],
+                }
+            ]
+        }
 
 
 class FakeRuntime:
@@ -131,6 +149,34 @@ def test_get_iam_role_summary_keeps_policy_listing_warnings() -> None:
     assert result["attached_policy_count"] == 0
     assert result["inline_policy_count"] == 0
     assert len(result["warnings"]) == 2
+
+
+def test_explain_iam_simulation_denial_summarizes_explicit_deny_metadata() -> None:
+    result = explain_iam_simulation_denial(
+        FakeRuntime(),
+        principal_arn="arn:aws:iam::123456789012:role/dev-lambda",
+        action="s3:GetObject",
+        resource_arn="arn:aws:s3:::dev-bucket/key",
+    )
+
+    assert result["summary"] == {
+        "status": "explicit_deny",
+        "decision": "explicitDeny",
+        "matched_statement_count": 1,
+        "missing_context_key_count": 1,
+    }
+    assert result["likely_policy_layer"] == "identity_or_resource_policy_explicit_deny"
+    assert result["evaluation"]["matched_statements"] == [
+        {
+            "source_policy_id": "InlineDeny",
+            "source_policy_type": "IAM Policy",
+            "start_position": {"Line": 2, "Column": 3},
+            "end_position": {"Line": 8, "Column": 4},
+        }
+    ]
+    assert result["evaluation"]["missing_context_values"] == ["aws:SourceVpc"]
+    assert result["uncertainty"]["raw_policy_documents_returned"] is False
+    assert "Statement" not in str(result)
 
 
 class FailingGetRoleIamClient(FakeIamClient):

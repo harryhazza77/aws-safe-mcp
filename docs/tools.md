@@ -51,6 +51,20 @@ Inputs:
 - `role_name` required, accepts a role name or role ARN
 - `region` optional
 
+### `explain_iam_simulation_denial`
+
+Runs IAM policy simulation for one principal, action, and resource, then
+summarizes deny results with matched statement metadata, missing context keys,
+likely policy layer, and permission-boundary/SCP uncertainty. It does not return
+raw trust or permission policy documents.
+
+Inputs:
+
+- `principal_arn` required, IAM role or user ARN
+- `action` required, such as `s3:GetObject`
+- `resource_arn` required
+- `region` optional
+
 ## KMS
 
 ### `list_kms_keys`
