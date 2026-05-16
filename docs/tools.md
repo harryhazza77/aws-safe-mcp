@@ -567,3 +567,17 @@ Inputs:
 - `services` optional list
 - `region` optional
 - `max_results` optional
+
+### `search_aws_resources_by_tag`
+
+Searches tagged resources with the Resource Groups Tagging API and groups
+matches by service and resource type. The result returns bounded ARN metadata
+and tag key/value pairs; if the tagging API is unavailable, the warning is
+reported without falling back to unverifiable tag guesses.
+
+Inputs:
+
+- `tag_key` required
+- `tag_value` optional
+- `region` optional
+- `max_results` optional

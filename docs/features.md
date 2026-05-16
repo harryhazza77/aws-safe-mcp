@@ -178,10 +178,13 @@ Related tools:
 - Find candidate Lambda functions, Step Functions state machines, S3 buckets,
   DynamoDB tables, CloudWatch log groups, API Gateway APIs, and EventBridge
   rules without using raw AWS API passthrough.
+- Search tagged resources with the Resource Groups Tagging API and group matches
+  by service and resource type.
 
 Related tools:
 
 - `search_aws_resources`
+- `search_aws_resources_by_tag`
 
 ## Local Emulator Workflows
 

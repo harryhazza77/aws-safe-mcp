@@ -74,7 +74,12 @@ from aws_safe_mcp.tools.lambda_tools import (
 from aws_safe_mcp.tools.lambda_tools import (
     list_lambda_functions as list_lambda_functions_tool,
 )
-from aws_safe_mcp.tools.resource_search import search_aws_resources as search_aws_resources_tool
+from aws_safe_mcp.tools.resource_search import (
+    search_aws_resources as search_aws_resources_tool,
+)
+from aws_safe_mcp.tools.resource_search import (
+    search_aws_resources_by_tag as search_aws_resources_by_tag_tool,
+)
 from aws_safe_mcp.tools.s3 import get_s3_bucket_summary as get_s3_bucket_summary_tool
 from aws_safe_mcp.tools.s3 import list_s3_buckets as list_s3_buckets_tool
 from aws_safe_mcp.tools.s3 import list_s3_objects as list_s3_objects_tool
@@ -778,6 +783,23 @@ def _register_search_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
             runtime,
             query=query,
             services=services,
+            region=region,
+            max_results=max_results,
+        )
+
+    @mcp.tool()
+    @audit.tool("search_aws_resources_by_tag")
+    def search_aws_resources_by_tag(
+        tag_key: str,
+        tag_value: str | None = None,
+        region: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """Search tagged resources and group them by service/resource type."""
+        return search_aws_resources_by_tag_tool(
+            runtime,
+            tag_key=tag_key,
+            tag_value=tag_value,
             region=region,
             max_results=max_results,
         )
