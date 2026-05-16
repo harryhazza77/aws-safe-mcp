@@ -6,11 +6,11 @@ from urllib.parse import urlparse
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from aws_safe_mcp.auth import AwsRuntime
-from aws_safe_mcp.errors import ToolInputError, normalize_aws_error
+from aws_safe_mcp.auth import AwsAuthError, AwsRuntime
+from aws_safe_mcp.errors import AwsToolError, ToolInputError, normalize_aws_error
 from aws_safe_mcp.tools.apigateway import list_api_gateways
 from aws_safe_mcp.tools.cloudwatch import list_cloudwatch_alarms, list_cloudwatch_log_groups
-from aws_safe_mcp.tools.common import clamp_limit, resolve_region
+from aws_safe_mcp.tools.common import clamp_limit, page_size, resolve_region
 from aws_safe_mcp.tools.dynamodb import list_dynamodb_tables
 from aws_safe_mcp.tools.eventbridge import list_eventbridge_rules
 from aws_safe_mcp.tools.lambda_tools import (
@@ -39,18 +39,37 @@ def search_aws_resources(
     region: str | None = None,
     max_results: int | None = None,
 ) -> dict[str, Any]:
+    """Search across supported AWS services for resources matching a query.
+
+    Performs read-only list/describe calls against each selected service,
+    filters by a case-insensitive substring on resource name/ARN, and
+    returns a unified result list bounded by `max_results`. Errors in any
+    one service are captured as warnings so other services still surface
+    results.
+    """
     normalized_query = query.strip().lower()
     if not normalized_query:
         raise ToolInputError("query is required")
     selected = _selected_services(services)
-    limit = max_results or 50
+    limit = clamp_limit(
+        max_results,
+        default=50,
+        configured_max=runtime.config.max_results,
+        label="max_results",
+    )
     results: list[dict[str, Any]] = []
     warnings: list[str] = []
 
     for service in selected:
         try:
             results.extend(_search_service(runtime, service, normalized_query, region, limit))
-        except Exception as exc:  # noqa: BLE001 - search should be best-effort across services
+        except (
+            AwsAuthError,
+            AwsToolError,
+            ToolInputError,
+            BotoCoreError,
+            ClientError,
+        ) as exc:
             warnings.append(f"{service}: {exc}")
 
     return {
@@ -70,6 +89,12 @@ def search_aws_resources_by_tag(
     region: str | None = None,
     max_results: int | None = None,
 ) -> dict[str, Any]:
+    """Search resources by tag using the Resource Groups Tagging API.
+
+    Paginates `tagging.GetResources` for a tag filter (optional exact value
+    match), returning a bounded summary keyed by ARN, plus group counts by
+    service/region. Read-only.
+    """
     required_key = _require_tag_key(tag_key)
     resolved_region = resolve_region(runtime, region)
     limit = clamp_limit(
@@ -80,7 +105,7 @@ def search_aws_resources_by_tag(
     )
     client = runtime.client("resourcegroupstaggingapi", region=resolved_region)
     request: dict[str, Any] = {
-        "ResourcesPerPage": min(limit, 100),
+        "ResourcesPerPage": page_size("tagging.GetResources", limit),
         "TagFilters": [{"Key": required_key}],
     }
     if tag_value is not None:
@@ -123,6 +148,12 @@ def get_cross_service_incident_brief(
     region: str | None = None,
     max_matches: int | None = None,
 ) -> dict[str, Any]:
+    """Assemble a cross-service incident brief from a free-text query.
+
+    Combines resource search results, matching CloudWatch alarms, and a
+    bounded set of Lambda-specific context records (recent errors +
+    summary) into a single brief with suggested next checks.
+    """
     normalized_query = query.strip()
     if not normalized_query:
         raise ToolInputError("query is required")
@@ -162,6 +193,12 @@ def build_log_signal_correlation_timeline(
     region: str | None = None,
     max_matches: int | None = None,
 ) -> dict[str, Any]:
+    """Build an ordered timeline of correlated log/alarm signals for a query.
+
+    Derives "symptoms" from the cross-service incident brief (alarms +
+    Lambda error groups), ordering them so the likely first failure point
+    is surfaced. No raw payloads or secret values are returned.
+    """
     brief = get_cross_service_incident_brief(
         runtime,
         query=query,
@@ -189,6 +226,12 @@ def plan_end_to_end_transaction_trace(
     region: str | None = None,
     max_matches: int | None = None,
 ) -> dict[str, Any]:
+    """Plan an ordered trace from a seed resource to likely breakpoints.
+
+    Discovers resources sharing the seed name fragment, orders them into a
+    plausible request flow (entry → compute → downstream), and surfaces
+    probable breakpoints from alarms and recent errors found in the brief.
+    """
     seed = seed_resource.strip()
     if not seed:
         raise ToolInputError("seed_resource is required")
@@ -216,6 +259,12 @@ def get_risk_scored_dependency_health_summary(
     region: str | None = None,
     max_matches: int | None = None,
 ) -> dict[str, Any]:
+    """Score discovered resources for risk and return an aggregate health summary.
+
+    Searches resources by application prefix, applies a small heuristic
+    risk score per resource (signals such as missing alarms, missing DLQ,
+    drift indicators), and returns an average + highest score.
+    """
     prefix = application_prefix.strip()
     if not prefix:
         raise ToolInputError("application_prefix is required")
@@ -245,6 +294,13 @@ def export_application_dependency_graph(
     region: str | None = None,
     max_matches: int | None = None,
 ) -> dict[str, Any]:
+    """Export an inferred dependency graph for resources matching a prefix.
+
+    Discovers resources by prefix, builds graph nodes, and walks each
+    Lambda's `explain_lambda_dependencies` output to add inferred edges.
+    Errors per-Lambda are captured under `unresolved_hints` so the rest of
+    the graph still exports. Confidence is marked as inferred only.
+    """
     prefix = application_prefix.strip()
     if not prefix:
         raise ToolInputError("application_prefix is required")
@@ -264,7 +320,13 @@ def export_application_dependency_graph(
                 include_permission_checks=False,
             )
             edges.extend(dependencies.get("edges", []))
-        except Exception as exc:  # noqa: BLE001 - graph export is best-effort
+        except (
+            AwsAuthError,
+            AwsToolError,
+            ToolInputError,
+            BotoCoreError,
+            ClientError,
+        ) as exc:
             unresolved.append({"resource": item.get("name"), "reason": str(exc)})
     return {
         "application_prefix": prefix,
@@ -289,6 +351,13 @@ def run_first_blocked_edge_incident(
     region: str | None = None,
     max_matches: int | None = None,
 ) -> dict[str, Any]:
+    """Walk a transaction trace and report the first blocked or unknown edge.
+
+    Drives `plan_end_to_end_transaction_trace` and returns the first edge
+    whose status is `blocked` or `unknown`, along with the edges checked
+    before it and the suggested next-safest tool to run. Used as an
+    incident-driver entry point for triage agents.
+    """
     seed = seed_resource.strip()
     normalized_symptom = symptom.strip()
     if not seed:
@@ -321,6 +390,15 @@ def analyze_resource_policy_condition_mismatches(
     target_arn: str,
     condition_summaries: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    """Classify supplied policy condition summaries for source/target mismatches.
+
+    NOTE: This tool makes NO AWS API calls and produces no live evidence.
+    It operates purely on the supplied `condition_summaries` (typically
+    extracted by the caller from a separate read-only policy summary) and
+    classifies each as compatible, mismatched, or unknown against the
+    source/target ARNs. Returned to give downstream tools a deterministic
+    classification step without re-fetching policies.
+    """
     source = source_arn.strip()
     target = target_arn.strip()
     if not source:
@@ -358,6 +436,12 @@ def audit_multi_region_drift_failover_readiness(
     regions: list[str],
     max_matches: int | None = None,
 ) -> dict[str, Any]:
+    """Audit multi-region resource drift for failover readiness.
+
+    Discovers resources matching the prefix in each region, fingerprints
+    them by stable name (region segments stripped), and reports missing
+    peers and name drift across the supplied regions. Read-only.
+    """
     prefix = application_prefix.strip()
     if not prefix:
         raise ToolInputError("application_prefix is required")
@@ -402,6 +486,12 @@ def generate_application_health_narrative(
     region: str | None = None,
     max_matches: int | None = None,
 ) -> dict[str, Any]:
+    """Generate an executive-style health narrative for an application prefix.
+
+    Composes dependency graph, risk score summary, and log/alarm timeline
+    into ranked risks, an executive summary, and a list of follow-up
+    tools. No payloads or secret values returned.
+    """
     prefix = application_prefix.strip()
     if not prefix:
         raise ToolInputError("application_prefix is required")
@@ -454,6 +544,13 @@ def diagnose_region_partition_mismatches(
     expected_partition: str | None = None,
     region: str | None = None,
 ) -> dict[str, Any]:
+    """Diagnose region or AWS partition mismatches across supplied refs.
+
+    Parses each supplied resource reference (ARN, queue URL, or
+    region-embedded name), compares against the expected region and
+    partition, and adds endpoint-override findings from the runtime so
+    misconfigured endpoints surface alongside data mismatches.
+    """
     resolved_region = resolve_region(runtime, region or expected_region)
     resolved_partition = expected_partition or "aws"
     refs = [_require_resource_ref(value) for value in resource_refs]
@@ -663,7 +760,8 @@ def _transaction_breakpoints(
     breakpoints = [
         {"stage": str(step["service"]), "reason": str(step["check"])} for step in steps[:5]
     ]
-    if brief.get("alarm_matches", {}).get("count", 0):
+    alarms = brief.get("alarm_matches", [])
+    if isinstance(alarms, list) and alarms:
         breakpoints.insert(0, {"stage": "cloudwatch", "reason": "matching alarms exist"})
     return breakpoints
 
@@ -868,7 +966,14 @@ def _as_list(value: Any) -> list[Any]:
 def _regional_resource_fingerprint(resource: dict[str, Any]) -> str:
     service = str(resource.get("service") or "unknown")
     name = str(resource.get("name") or "")
-    normalized_name = re.sub(r"\b[a-z]{2}-[a-z]+-\d\b", "{region}", name)
+    # Heuristic: strip embedded AWS region segments so the same logical
+    # resource fingerprints identically across regions. Covers standard
+    # commercial (us-east-1), GovCloud (us-gov-west-1), and China
+    # (cn-north-1) region formats; non-standard region-encoded names will
+    # not be normalized and will appear as missing peers instead of drift.
+    normalized_name = re.sub(
+        r"\b[a-z]{2}(?:-gov)?-[a-z]+-\d\b", "{region}", name
+    )
     return f"{service}:{normalized_name}"
 
 

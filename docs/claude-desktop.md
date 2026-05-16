@@ -27,7 +27,7 @@ Add an MCP server entry like this:
 }
 ```
 
-Restart Claude Desktop after changing the config. If `aws_auth_status` reports
+Restart Claude Desktop after changing the config. If `get_aws_auth_status` reports
 `authenticated: false`, run the login command for your AWS profile:
 
 ```bash

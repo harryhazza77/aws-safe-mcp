@@ -12,7 +12,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from aws_safe_mcp.auth import AwsRuntime
 from aws_safe_mcp.config import RedactionConfig
 from aws_safe_mcp.errors import ToolInputError, normalize_aws_error
-from aws_safe_mcp.redaction import redact_text
+from aws_safe_mcp.redaction import is_secret_like_key, redact_text
 from aws_safe_mcp.tools.common import (
     bounded_filter_log_events,
     clamp_limit,
@@ -20,6 +20,7 @@ from aws_safe_mcp.tools.common import (
     compact_log_message,
     isoformat,
     log_event_groups,
+    page_size,
     require_lambda_name,
     require_log_group_name,
     resolve_region,
@@ -36,11 +37,11 @@ def list_lambda_functions(
     name_prefix: str | None = None,
     max_results: int | None = None,
 ) -> dict[str, Any]:
-    """Explain Lambda dependencies without exposing environment values.
+    """List Lambda functions in a region with bounded result size.
 
-    The result combines Lambda configuration, execution role metadata, inferred
-    dependency edges, unresolved hints from safe names, and optional IAM
-    simulation checks into the shared dependency graph contract.
+    Returns a compact per-function record (name, ARN, runtime, last modified,
+    handler) from `lambda:ListFunctions`. No code, environment values, or
+    policy documents are returned. Filtered by optional name prefix.
     """
 
     resolved_region = resolve_region(runtime, region)
@@ -55,7 +56,9 @@ def list_lambda_functions(
     functions: list[dict[str, Any]] = []
     try:
         paginator = client.get_paginator("list_functions")
-        for page in paginator.paginate(PaginationConfig={"PageSize": min(limit, 50)}):
+        for page in paginator.paginate(
+            PaginationConfig={"PageSize": page_size("lambda.ListFunctions", limit)}
+        ):
             for item in page.get("Functions", []):
                 function_name = str(item.get("FunctionName", ""))
                 if name_prefix and not function_name.startswith(name_prefix):
@@ -78,11 +81,12 @@ def get_lambda_summary(
     function_name: str,
     region: str | None = None,
 ) -> dict[str, Any]:
-    """Simulate whether a Lambda execution role can perform one action.
+    """Summarize a Lambda function's configuration and recent metrics.
 
-    This is a focused diagnostic helper rather than a generic IAM simulator: the
-    principal is always the Lambda's execution role, and failures to run
-    simulation are returned as an unknown decision with warnings.
+    Combines `lambda:GetFunctionConfiguration` (runtime, memory, timeout,
+    architecture, environment variable keys only — never values) with a
+    bounded set of recent CloudWatch metrics. No code is downloaded and no
+    invocation payloads are returned.
     """
 
     resolved_region = resolve_region(runtime, region)
@@ -122,7 +126,7 @@ def get_lambda_event_source_mapping_diagnostics(
     try:
         response = client.list_event_source_mappings(
             FunctionName=required_name,
-            MaxItems=min(limit, 100),
+            MaxItems=page_size("lambda.ListEventSourceMappings", limit),
         )
     except (BotoCoreError, ClientError) as exc:
         raise normalize_aws_error(exc, "lambda.ListEventSourceMappings") from exc
@@ -214,6 +218,14 @@ def investigate_lambda_deployment_drift(
     region: str | None = None,
     max_results: int | None = None,
 ) -> dict[str, Any]:
+    """Diagnose drift between Lambda configuration, aliases, and versions.
+
+    Compares the current `$LATEST` configuration with published versions and
+    weighted alias routing, surfacing signals such as unreleased changes,
+    pinned-version mismatches, and whether `$LATEST` is exposed via the
+    resource policy. Returns derived signals and suggested next checks; no
+    code or environment values are returned.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     summary = get_lambda_summary(runtime, required_name, region=resolved_region)
@@ -255,6 +267,12 @@ def get_lambda_recent_errors(
     region: str | None = None,
     max_events: int | None = 50,
 ) -> dict[str, Any]:
+    """Return bounded recent error log events from a Lambda's log group.
+
+    Filters `/aws/lambda/<name>` for ERROR/Exception/Traceback/`Task timed
+    out` lines over a bounded window, groups them by signature, and truncates
+    each message via the configured redaction limit. Read-only.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     window_minutes = clamp_since_minutes(
@@ -307,6 +325,12 @@ def investigate_lambda_failure(
     since_minutes: int | None = 60,
     region: str | None = None,
 ) -> dict[str, Any]:
+    """Triage a failing Lambda by correlating configuration with recent errors.
+
+    Combines the function summary, bounded recent errors, alias topology,
+    and event source mappings into derived signals and next-step
+    suggestions. Does not invoke the function or read any payload.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     summary = get_lambda_summary(runtime, required_name, region=resolved_region)
@@ -349,6 +373,12 @@ def investigate_lambda_cold_start_init(
     since_minutes: int | None = 60,
     region: str | None = None,
 ) -> dict[str, Any]:
+    """Diagnose Lambda cold-start / INIT-phase issues from recent logs.
+
+    Correlates package type, code size, memory, VPC attachment, and recent
+    metrics with INIT-phase log markers (Init Duration, Init Report) to
+    surface likely cold-start drivers and remediation hints.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     summary = get_lambda_summary(runtime, required_name, region=resolved_region)
@@ -388,6 +418,12 @@ def investigate_lambda_timeout_root_cause(
     since_minutes: int | None = 60,
     region: str | None = None,
 ) -> dict[str, Any]:
+    """Diagnose Lambda timeouts from configuration, errors, and network shape.
+
+    Combines configured timeout, event-source backpressure, network egress
+    posture (VPC, NAT, endpoints), and recent timeout-shaped log entries to
+    suggest where the hang most likely originates.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     summary = get_lambda_summary(runtime, required_name, region=resolved_region)
@@ -424,6 +460,13 @@ def audit_async_lambda_failure_path(
     function_name: str,
     region: str | None = None,
 ) -> dict[str, Any]:
+    """Audit a Lambda's asynchronous invocation failure topology.
+
+    Inspects the async invoke config (retries, max event age, on-failure
+    destination), DLQ wiring, and reserved concurrency; cross-references
+    event sources to highlight gaps where failed events are dropped or
+    looped without bounds.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     summary = get_lambda_summary(runtime, required_name, region=resolved_region)
@@ -452,6 +495,12 @@ def investigate_lambda_concurrency_bottlenecks(
     function_name: str,
     region: str | None = None,
 ) -> dict[str, Any]:
+    """Diagnose throttling and concurrency bottlenecks for a Lambda.
+
+    Inspects reserved concurrency, recent throttle/invoke metrics, and
+    event-source mappings to identify whether throttling is policy-imposed
+    (reserved cap), region-wide, or driven by an event source's batching.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     summary = get_lambda_summary(runtime, required_name, region=resolved_region)
@@ -479,6 +528,13 @@ def explain_lambda_dependencies(
     include_permission_checks: bool = True,
     max_permission_checks: int | None = None,
 ) -> dict[str, Any]:
+    """Explain Lambda dependencies without exposing environment values.
+
+    Combines Lambda configuration, execution role metadata, inferred
+    dependency edges, unresolved hints from safe names, and optional IAM
+    simulation checks into the shared dependency graph contract. Never
+    returns env var values or full IAM policy documents.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     permission_check_limit = clamp_limit(
@@ -574,6 +630,13 @@ def explain_lambda_network_access(
     region: str | None = None,
     target_url: str | None = None,
 ) -> dict[str, Any]:
+    """Explain a Lambda's network egress posture and optional target reachability.
+
+    Inspects VPC attachment (subnets, security groups, route tables, NACLs,
+    VPC endpoints) and computes whether a supplied target URL (or one
+    inferred from environment URLs) is plausibly reachable from the
+    function. Returns redacted summaries only.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     required_target_url = _require_optional_url(target_url)
@@ -652,6 +715,13 @@ def simulate_lambda_security_group_path(
     target_security_group_id: str | None = None,
     region: str | None = None,
 ) -> dict[str, Any]:
+    """Simulate whether a Lambda's security groups allow reaching a target.
+
+    Evaluates egress rules on the Lambda's security groups against the
+    supplied CIDR/port. When `target_security_group_id` is supplied, also
+    checks ingress rules from the Lambda's subnet CIDRs. Read-only:
+    consults EC2 describe APIs only.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     required_cidr = _require_cidr(target_cidr)
@@ -734,6 +804,13 @@ def check_lambda_permission_path(
     resource_arn: str,
     region: str | None = None,
 ) -> dict[str, Any]:
+    """Simulate whether a Lambda execution role can perform one action.
+
+    A focused diagnostic helper rather than a generic IAM simulator: the
+    principal is always the Lambda's execution role. Failures to run the
+    simulation are returned as an unknown decision with warnings; the
+    raw policy documents are never returned.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     required_action = _require_iam_action(action)
@@ -774,6 +851,14 @@ def prove_lambda_invocation_path(
     source_arn: str | None = None,
     region: str | None = None,
 ) -> dict[str, Any]:
+    """Prove (or refute) that a principal can invoke a Lambda function.
+
+    Walks the invocation edges in order — function exists, region/account
+    alignment, trigger mapping (event source), resource policy grants the
+    principal, and caller identity policy permits `lambda:InvokeFunction`.
+    Returns a per-edge pass/fail/unknown verdict; never returns raw policy
+    documents.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     required_principal = _require_caller_principal(caller_principal)
@@ -834,6 +919,12 @@ def analyze_cross_account_lambda_invocation(
     source_arn: str | None = None,
     region: str | None = None,
 ) -> dict[str, Any]:
+    """Analyze a Lambda invocation that crosses AWS account boundaries.
+
+    Wraps `prove_lambda_invocation_path` with a cross-account topology
+    summary (caller account, function account, source ARN account) and
+    flags the cross-account checks that must pass on both sides.
+    """
     proof = prove_lambda_invocation_path(
         runtime,
         function_name=function_name,
@@ -864,6 +955,12 @@ def check_lambda_to_sqs_sendability(
     queue_url: str,
     region: str | None = None,
 ) -> dict[str, Any]:
+    """Check whether a Lambda can send messages to a specific SQS queue.
+
+    Combines an IAM simulation of `sqs:SendMessage` against the queue ARN
+    with the queue's resource policy (principals + DenyAllExceptCallerPrincipal
+    patterns), returning a per-edge pass/fail/unknown verdict and warnings.
+    """
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
     required_queue_url = _require_queue_url(queue_url)
@@ -972,6 +1069,10 @@ def _lambda_environment_dependency_hints(variables: dict[Any, Any]) -> list[dict
     hints = []
     for raw_key, raw_value in variables.items():
         key = str(raw_key)
+        if is_secret_like_key(key):
+            # Skip secret-like keys to avoid parsing values that may embed
+            # credentials, tokens, or otherwise-sensitive material.
+            continue
         value = str(raw_value or "")
         key_service = _likely_service_from_name(key)
         value_hint = _environment_value_hint(value)
@@ -1933,7 +2034,10 @@ def _lambda_aliases_for_summary(
     limit: int,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     try:
-        response = client.list_aliases(FunctionName=function_name, MaxItems=min(limit, 100))
+        response = client.list_aliases(
+            FunctionName=function_name,
+            MaxItems=page_size("lambda.ListAliases", limit),
+        )
     except (BotoCoreError, ClientError) as exc:
         return [], [str(normalize_aws_error(exc, "lambda.ListAliases"))]
 
@@ -1970,7 +2074,7 @@ def _lambda_versions_for_summary(
     try:
         response = client.list_versions_by_function(
             FunctionName=function_name,
-            MaxItems=min(limit, 100),
+            MaxItems=page_size("lambda.ListVersionsByFunction", limit),
         )
     except (BotoCoreError, ClientError) as exc:
         return [], [str(normalize_aws_error(exc, "lambda.ListVersionsByFunction"))]

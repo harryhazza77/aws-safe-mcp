@@ -322,7 +322,7 @@ def test_plan_end_to_end_transaction_trace_orders_probable_path(
                     {"service": "sqs", "name": "dev-queue"},
                 ]
             },
-            "alarm_matches": {"count": 1},
+            "alarm_matches": [{"alarm_name": "dev-errors"}],
         }
 
     monkeypatch.setattr(resource_search, "get_cross_service_incident_brief", fake_brief)

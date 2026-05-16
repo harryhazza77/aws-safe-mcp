@@ -10,7 +10,7 @@ from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.dynamodb import (
     check_dynamodb_stream_lambda_readiness,
-    dynamodb_table_summary,
+    get_dynamodb_table_summary,
     list_dynamodb_tables,
 )
 
@@ -124,10 +124,10 @@ class FakeIamClient:
         return {"EvaluationResults": [{"EvalDecision": "allowed"}]}
 
 
-def test_dynamodb_table_summary_returns_metadata_without_scan() -> None:
+def test_get_dynamodb_table_summary_returns_metadata_without_scan() -> None:
     runtime = FakeRuntime()
 
-    result = dynamodb_table_summary(runtime, "dev-orders")
+    result = get_dynamodb_table_summary(runtime, "dev-orders")
 
     assert result["table_name"] == "dev-orders"
     assert result["billing_mode"] == "PAY_PER_REQUEST"
@@ -165,17 +165,17 @@ def test_check_dynamodb_stream_lambda_readiness_reports_ready_mapping() -> None:
     assert result["permission_checks"]["summary"] == {"allowed": 4, "denied": 0, "unknown": 0}
 
 
-def test_dynamodb_table_summary_rejects_blank_table_name() -> None:
+def test_get_dynamodb_table_summary_rejects_blank_table_name() -> None:
     with pytest.raises(ToolInputError, match="table_name is required"):
-        dynamodb_table_summary(FakeRuntime(), " ")
+        get_dynamodb_table_summary(FakeRuntime(), " ")
 
 
-def test_dynamodb_table_summary_normalizes_aws_errors() -> None:
+def test_get_dynamodb_table_summary_normalizes_aws_errors() -> None:
     runtime = FakeRuntime()
     runtime.client_obj = FailingDynamoDbClient()
 
     with pytest.raises(AwsToolError, match="AWS dynamodb.DescribeTable ResourceNotFoundException"):
-        dynamodb_table_summary(runtime, "missing-table")
+        get_dynamodb_table_summary(runtime, "missing-table")
 
 
 class FailingDynamoDbClient:

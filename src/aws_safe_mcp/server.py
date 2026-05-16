@@ -21,10 +21,6 @@ from aws_safe_mcp.tools.apigateway import list_api_gateways as list_api_gateways
 from aws_safe_mcp.tools.cloudwatch import (
     check_cloudwatch_logs_writeability as check_cloudwatch_logs_writeability_tool,
 )
-from aws_safe_mcp.tools.cloudwatch import cloudwatch_log_search as cloudwatch_log_search_tool
-from aws_safe_mcp.tools.cloudwatch import (
-    cloudwatch_logs_insights_query as cloudwatch_logs_insights_query_tool,
-)
 from aws_safe_mcp.tools.cloudwatch import (
     find_cloudwatch_alarm_coverage_gaps as find_cloudwatch_alarm_coverage_gaps_tool,
 )
@@ -35,11 +31,15 @@ from aws_safe_mcp.tools.cloudwatch import list_cloudwatch_alarms as list_cloudwa
 from aws_safe_mcp.tools.cloudwatch import (
     list_cloudwatch_log_groups as list_cloudwatch_log_groups_tool,
 )
+from aws_safe_mcp.tools.cloudwatch import (
+    query_cloudwatch_logs_insights as query_cloudwatch_logs_insights_tool,
+)
+from aws_safe_mcp.tools.cloudwatch import search_cloudwatch_logs as search_cloudwatch_logs_tool
 from aws_safe_mcp.tools.dynamodb import (
     check_dynamodb_stream_lambda_readiness as check_dynamodb_stream_lambda_readiness_tool,
 )
 from aws_safe_mcp.tools.dynamodb import (
-    dynamodb_table_summary as dynamodb_table_summary_tool,
+    get_dynamodb_table_summary as get_dynamodb_table_summary_tool,
 )
 from aws_safe_mcp.tools.dynamodb import list_dynamodb_tables as list_dynamodb_tables_tool
 from aws_safe_mcp.tools.ecs import get_ecs_service_summary as get_ecs_service_summary_tool
@@ -67,8 +67,8 @@ from aws_safe_mcp.tools.iam import (
     explain_iam_simulation_denial as explain_iam_simulation_denial_tool,
 )
 from aws_safe_mcp.tools.iam import get_iam_role_summary as get_iam_role_summary_tool
-from aws_safe_mcp.tools.identity import aws_auth_status as get_aws_auth_status
-from aws_safe_mcp.tools.identity import aws_identity as get_aws_identity
+from aws_safe_mcp.tools.identity import get_aws_auth_status as get_aws_auth_status_tool
+from aws_safe_mcp.tools.identity import get_aws_identity as get_aws_identity_tool
 from aws_safe_mcp.tools.kms import check_kms_dependent_path as check_kms_dependent_path_tool
 from aws_safe_mcp.tools.kms import (
     find_kms_key_lifecycle_blast_radius as find_kms_key_lifecycle_blast_radius_tool,
@@ -236,16 +236,16 @@ def create_server(runtime: AwsRuntime) -> FastMCP:
 
 def _register_identity_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -> None:
     @mcp.tool()
-    @audit.tool("aws_auth_status")
-    def aws_auth_status() -> dict[str, str | bool | None]:
+    @audit.tool("get_aws_auth_status")
+    def get_aws_auth_status() -> dict[str, str | bool | None]:
         """Quickly show whether AWS auth is valid and which principal is active."""
-        return get_aws_auth_status(runtime)
+        return get_aws_auth_status_tool(runtime)
 
     @mcp.tool()
-    @audit.tool("aws_identity")
-    def aws_identity() -> dict[str, str | bool | None]:
+    @audit.tool("get_aws_identity")
+    def get_aws_identity() -> dict[str, str | bool | None]:
         """Show authenticated AWS account, ARN, profile, region, and read-only mode."""
-        return get_aws_identity(runtime)
+        return get_aws_identity_tool(runtime)
 
 
 def _register_iam_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -> None:
@@ -253,13 +253,11 @@ def _register_iam_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
     @audit.tool("get_iam_role_summary")
     def get_iam_role_summary(
         role_name: str,
-        region: str | None = None,
     ) -> dict[str, object]:
         """Summarize one IAM role without returning full policy documents."""
         return get_iam_role_summary_tool(
             runtime,
             role_name=role_name,
-            region=region,
         )
 
     @mcp.tool()
@@ -268,7 +266,6 @@ def _register_iam_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
         principal_arn: str,
         action: str,
         resource_arn: str,
-        region: str | None = None,
     ) -> dict[str, object]:
         """Explain IAM simulation denies without returning raw policy documents."""
         return explain_iam_simulation_denial_tool(
@@ -276,7 +273,6 @@ def _register_iam_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
             principal_arn=principal_arn,
             action=action,
             resource_arn=resource_arn,
-            region=region,
         )
 
 
@@ -768,13 +764,13 @@ def _register_dynamodb_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRunti
         )
 
     @mcp.tool()
-    @audit.tool("dynamodb_table_summary")
-    def dynamodb_table_summary(
+    @audit.tool("get_dynamodb_table_summary")
+    def get_dynamodb_table_summary(
         table_name: str,
         region: str | None = None,
     ) -> dict[str, object]:
         """Summarize one DynamoDB table without scans or item reads."""
-        return dynamodb_table_summary_tool(
+        return get_dynamodb_table_summary_tool(
             runtime,
             table_name=table_name,
             region=region,
@@ -1057,8 +1053,8 @@ def _register_cloudwatch_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRun
         )
 
     @mcp.tool()
-    @audit.tool("cloudwatch_log_search")
-    def cloudwatch_log_search(
+    @audit.tool("search_cloudwatch_logs")
+    def search_cloudwatch_logs(
         log_group_name: str,
         query: str,
         since_minutes: int | None = 60,
@@ -1066,7 +1062,7 @@ def _register_cloudwatch_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRun
         region: str | None = None,
     ) -> dict[str, object]:
         """Search one CloudWatch log group with bounded filter_log_events."""
-        return cloudwatch_log_search_tool(
+        return search_cloudwatch_logs_tool(
             runtime,
             log_group_name=log_group_name,
             query=query,
@@ -1076,8 +1072,8 @@ def _register_cloudwatch_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRun
         )
 
     @mcp.tool()
-    @audit.tool("cloudwatch_logs_insights_query")
-    def cloudwatch_logs_insights_query(
+    @audit.tool("query_cloudwatch_logs_insights")
+    def query_cloudwatch_logs_insights(
         log_group_name: str,
         query: str,
         since_minutes: int | None = 60,
@@ -1085,7 +1081,7 @@ def _register_cloudwatch_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRun
         region: str | None = None,
     ) -> dict[str, object]:
         """Run a bounded Logs Insights query against one log group."""
-        return cloudwatch_logs_insights_query_tool(
+        return query_cloudwatch_logs_insights_tool(
             runtime,
             log_group_name=log_group_name,
             query=query,

@@ -8,7 +8,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from aws_safe_mcp.auth import AwsRuntime
 from aws_safe_mcp.errors import ToolInputError, normalize_aws_error
-from aws_safe_mcp.tools.common import clamp_limit, resolve_region
+from aws_safe_mcp.tools.common import clamp_limit, page_size, resolve_region
 from aws_safe_mcp.tools.graph import dependency_graph_summary, empty_permission_checks
 
 
@@ -31,7 +31,7 @@ def list_sqs_queues(
 
     try:
         while len(queues) < limit:
-            request: dict[str, Any] = {"MaxResults": min(limit, 1000)}
+            request: dict[str, Any] = {"MaxResults": page_size("sqs.ListQueues", limit)}
             if name_prefix:
                 request["QueueNamePrefix"] = name_prefix
             if token:
@@ -404,7 +404,7 @@ def _eventbridge_targets_for_queue(
 ) -> list[dict[str, Any]]:
     client = runtime.client("events", region=region)
     try:
-        bus_response = client.list_event_buses(Limit=min(limit, 100))
+        bus_response = client.list_event_buses(Limit=page_size("eventbridge.ListEventBuses", limit))
     except (BotoCoreError, ClientError) as exc:
         warning = normalize_aws_error(exc, "events.ListEventBuses")
         warnings.append(f"Unable to list EventBridge buses: {warning}")
@@ -416,7 +416,10 @@ def _eventbridge_targets_for_queue(
             break
         bus_name = str(bus.get("Name") or "default")
         try:
-            rule_response = client.list_rules(EventBusName=bus_name, Limit=min(limit, 100))
+            rule_response = client.list_rules(
+                EventBusName=bus_name,
+                Limit=page_size("eventbridge.ListRules", limit),
+            )
         except (BotoCoreError, ClientError) as exc:
             warning = normalize_aws_error(exc, "events.ListRules")
             warnings.append(f"Unable to list EventBridge rules on {bus_name}: {warning}")
@@ -431,7 +434,7 @@ def _eventbridge_targets_for_queue(
                 target_response = client.list_targets_by_rule(
                     Rule=rule_name,
                     EventBusName=bus_name,
-                    Limit=min(limit, 100),
+                    Limit=page_size("eventbridge.ListTargetsByRule", limit),
                 )
             except (BotoCoreError, ClientError) as exc:
                 warning = normalize_aws_error(exc, "events.ListTargetsByRule")
@@ -473,7 +476,7 @@ def _lambda_mappings_for_queue(
     try:
         response = client.list_event_source_mappings(
             EventSourceArn=queue_arn,
-            MaxItems=min(limit, 100),
+            MaxItems=page_size("lambda.ListEventSourceMappings", limit),
         )
     except (BotoCoreError, ClientError) as exc:
         warning = normalize_aws_error(exc, "lambda.ListEventSourceMappings")

@@ -37,7 +37,7 @@ uv --directory /path/to/aws-sdk-mcp run aws-safe-mcp \
 ## Client Behavior To Expect
 
 - The server can start before AWS credentials are valid.
-- `aws_auth_status` should be the first tool call in a new client session.
+- `get_aws_auth_status` should be the first tool call in a new client session.
 - After `aws login` or `aws sso login`, the next AWS tool call re-checks STS.
 - Some clients need a reconnect/reload after server code or dependency changes.
 - The server writes audit logs to stderr; clients may show these in their MCP

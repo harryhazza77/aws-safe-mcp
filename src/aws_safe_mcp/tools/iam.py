@@ -6,15 +6,19 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from aws_safe_mcp.auth import AwsRuntime
 from aws_safe_mcp.errors import ToolInputError, normalize_aws_error
-from aws_safe_mcp.tools.common import isoformat, resolve_region
+from aws_safe_mcp.tools.common import isoformat
 
 
 def get_iam_role_summary(
     runtime: AwsRuntime,
     role_name: str,
-    region: str | None = None,
 ) -> dict[str, Any]:
-    resolved_region = resolve_region(runtime, region)
+    """Summarize one IAM role without returning full policy documents.
+
+    Returns role metadata, attached managed policy ARNs (names only),
+    inline policy names, trust policy principals/actions, and permissions
+    boundary presence. IAM is a global service: no region parameter.
+    """
     required_role_name = _require_role_name(role_name)
     client = runtime.client("iam", region=runtime.region)
     warnings: list[str] = []
@@ -58,7 +62,6 @@ def get_iam_role_summary(
     return {
         "role_name": role.get("RoleName") or required_role_name,
         "role_arn": role.get("Arn"),
-        "region": resolved_region,
         "path": role.get("Path"),
         "created_at": isoformat(role.get("CreateDate")),
         "trust_policy": _trust_policy_summary(role.get("AssumeRolePolicyDocument")),
@@ -80,9 +83,14 @@ def explain_iam_simulation_denial(
     principal_arn: str,
     action: str,
     resource_arn: str,
-    region: str | None = None,
 ) -> dict[str, Any]:
-    resolved_region = resolve_region(runtime, region)
+    """Explain an IAM simulation denial without returning raw policy documents.
+
+    Runs `iam:SimulatePrincipalPolicy` for one (principal, action,
+    resource) triple and classifies the decision (allowed / explicitDeny /
+    implicitDeny / unknown), the likely policy layer responsible, and any
+    missing context keys. Raw policy documents are never returned.
+    """
     required_principal = _require_principal_arn(principal_arn)
     required_action = _require_action(action)
     required_resource = _require_resource_arn(resource_arn)
@@ -101,7 +109,6 @@ def explain_iam_simulation_denial(
         "principal_arn": required_principal,
         "action": required_action,
         "resource_arn": required_resource,
-        "region": resolved_region,
         "summary": _denial_summary(evaluation),
         "evaluation": evaluation,
         "likely_policy_layer": _likely_policy_layer(evaluation),

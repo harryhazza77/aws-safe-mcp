@@ -31,7 +31,7 @@ claude mcp add --transport stdio --scope local aws-safe-mcp-local-package -- \
 
 Good first prompts:
 
-- `Call aws_auth_status.`
+- `Call get_aws_auth_status.`
 - `Search AWS resources for "api".`
 - `List S3 buckets.`
 - `List CloudWatch log groups with max 5 results.`

@@ -268,7 +268,7 @@ this is fine:
 uvx aws-safe-mcp --profile dev --region eu-west-2 --readonly --config ~/.config/aws-safe-mcp/config.yaml
 ```
 
-If `aws_auth_status` reports `authenticated: false`, authenticate normally:
+If `get_aws_auth_status` reports `authenticated: false`, authenticate normally:
 
 ```bash
 aws login --profile dev
@@ -276,7 +276,7 @@ aws login --profile dev
 aws sso login --profile dev
 ```
 
-The next `aws_auth_status` or AWS tool call re-checks STS. You do not need to
+The next `get_aws_auth_status` or AWS tool call re-checks STS. You do not need to
 restart the MCP server.
 
 ## Permissions

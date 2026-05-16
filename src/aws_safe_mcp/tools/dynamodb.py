@@ -9,6 +9,7 @@ from aws_safe_mcp.errors import normalize_aws_error
 from aws_safe_mcp.tools.common import (
     clamp_limit,
     isoformat,
+    page_size,
     require_dynamodb_table_name,
     resolve_region,
 )
@@ -29,7 +30,7 @@ def list_dynamodb_tables(
     )
     client = runtime.client("dynamodb", region=resolved_region)
     tables: list[str] = []
-    request: dict[str, Any] = {"Limit": min(limit, 100)}
+    request: dict[str, Any] = {"Limit": page_size("dynamodb.ListTables", limit)}
 
     try:
         while len(tables) < limit:
@@ -57,7 +58,7 @@ def list_dynamodb_tables(
     }
 
 
-def dynamodb_table_summary(
+def get_dynamodb_table_summary(
     runtime: AwsRuntime,
     table_name: str,
     region: str | None = None,
@@ -98,7 +99,7 @@ def check_dynamodb_stream_lambda_readiness(
     max_results: int | None = None,
 ) -> dict[str, Any]:
     resolved_region = resolve_region(runtime, region)
-    table = dynamodb_table_summary(runtime, table_name, region=resolved_region)
+    table = get_dynamodb_table_summary(runtime, table_name, region=resolved_region)
     stream = table.get("stream", {})
     stream_arn = stream.get("stream_arn") if isinstance(stream, dict) else None
     limit = clamp_limit(
@@ -176,7 +177,7 @@ def _lambda_mappings_for_stream(
     try:
         response = client.list_event_source_mappings(
             EventSourceArn=stream_arn,
-            MaxItems=min(limit, 100),
+            MaxItems=page_size("lambda.ListEventSourceMappings", limit),
         )
     except (BotoCoreError, ClientError) as exc:
         warnings.append(str(normalize_aws_error(exc, "lambda.ListEventSourceMappings")))

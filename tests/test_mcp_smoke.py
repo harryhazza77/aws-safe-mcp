@@ -51,12 +51,12 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
 
     tools = await server.list_tools()
     tool_names = {tool.name for tool in tools}
-    _, status_result = await server.call_tool("aws_auth_status", {})
-    _, identity_result = await server.call_tool("aws_identity", {})
+    _, status_result = await server.call_tool("get_aws_auth_status", {})
+    _, identity_result = await server.call_tool("get_aws_identity", {})
 
     assert tool_names == {
-        "aws_auth_status",
-        "aws_identity",
+        "get_aws_auth_status",
+        "get_aws_identity",
         "get_iam_role_summary",
         "explain_iam_simulation_denial",
         "list_kms_keys",
@@ -101,7 +101,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "explain_sns_topic_dependencies",
         "audit_sns_fanout_delivery_readiness",
         "list_dynamodb_tables",
-        "dynamodb_table_summary",
+        "get_dynamodb_table_summary",
         "check_dynamodb_stream_lambda_readiness",
         "list_ecs_clusters",
         "list_ecs_services",
@@ -110,8 +110,8 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "get_cloudwatch_alarm_summary",
         "find_cloudwatch_alarm_coverage_gaps",
         "list_cloudwatch_log_groups",
-        "cloudwatch_log_search",
-        "cloudwatch_logs_insights_query",
+        "search_cloudwatch_logs",
+        "query_cloudwatch_logs_insights",
         "check_cloudwatch_logs_writeability",
         "list_api_gateways",
         "get_api_gateway_summary",
@@ -184,10 +184,10 @@ readonly: true
     ):
         await session.initialize()
         tools = await session.list_tools()
-        result = await session.call_tool("aws_auth_status", {})
+        result = await session.call_tool("get_aws_auth_status", {})
 
     tool_names = {tool.name for tool in tools.tools}
-    assert "aws_auth_status" in tool_names
+    assert "get_aws_auth_status" in tool_names
     assert result.structuredContent is not None
     assert result.structuredContent["authenticated"] is False
     assert "missing-profile-for-stdio-smoke" in str(result.structuredContent["message"])

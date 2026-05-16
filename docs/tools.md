@@ -27,13 +27,13 @@ Permission checks include `enabled`, `checked_count`, `summary`, and `checks`.
 
 ## Identity
 
-### `aws_auth_status`
+### `get_aws_auth_status`
 
 Reports whether the server is authenticated and shows the active AWS account,
 principal type, role/user name, session name, profile, region, read-only status,
 and a concise message when credentials are missing or expired.
 
-### `aws_identity`
+### `get_aws_identity`
 
 Returns the current AWS account, ARN, user ID, configured profile, configured
 region, and read-only status.
@@ -481,7 +481,7 @@ Inputs:
 - `name_prefix` optional
 - `max_results` optional
 
-### `dynamodb_table_summary`
+### `get_dynamodb_table_summary`
 
 Summarizes one DynamoDB table using metadata APIs only. No scan, query, or item
 read is performed.
@@ -723,7 +723,7 @@ Inputs:
 - `name_prefix` optional
 - `max_results` optional
 
-### `cloudwatch_log_search`
+### `search_cloudwatch_logs`
 
 Searches one CloudWatch log group with bounded `filter_log_events`. Results are
 truncated and returned as concise event summaries.
@@ -736,7 +736,7 @@ Inputs:
 - `max_results` optional, default `50`
 - `region` optional
 
-### `cloudwatch_logs_insights_query`
+### `query_cloudwatch_logs_insights`
 
 Runs a bounded CloudWatch Logs Insights query against one explicitly provided
 log group. The tool clamps the time window and result count, rejects broad

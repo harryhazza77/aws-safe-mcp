@@ -13,6 +13,7 @@ from aws_safe_mcp.redaction import redact_data, truncate_string
 from aws_safe_mcp.tools.common import (
     clamp_limit,
     isoformat,
+    page_size,
     require_step_functions_execution,
     resolve_region,
 )
@@ -37,7 +38,9 @@ def list_step_functions(
 
     try:
         paginator = client.get_paginator("list_state_machines")
-        for page in paginator.paginate(PaginationConfig={"PageSize": min(limit, 100)}):
+        for page in paginator.paginate(
+            PaginationConfig={"PageSize": page_size("stepfunctions.ListStateMachines", limit)}
+        ):
             for item in page.get("stateMachines", []):
                 name = str(item.get("name", ""))
                 if name_prefix and not name.startswith(name_prefix):

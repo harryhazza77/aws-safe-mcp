@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -17,6 +18,7 @@ from aws_safe_mcp.tools.common import (
     compact_log_message,
     isoformat,
     log_event_groups,
+    page_size,
     require_log_group_name,
     resolve_region,
 )
@@ -36,7 +38,7 @@ def list_cloudwatch_log_groups(
         label="max_results",
     )
     client = runtime.client("logs", region=resolved_region)
-    request: dict[str, Any] = {"limit": min(limit, 50)}
+    request: dict[str, Any] = {"limit": page_size("logs.DescribeLogGroups", limit)}
     if name_prefix:
         request["logGroupNamePrefix"] = name_prefix
 
@@ -68,7 +70,7 @@ def list_cloudwatch_log_groups(
     }
 
 
-def cloudwatch_log_search(
+def search_cloudwatch_logs(
     runtime: AwsRuntime,
     log_group_name: str,
     query: str,
@@ -119,7 +121,7 @@ def cloudwatch_log_search(
     }
 
 
-def cloudwatch_logs_insights_query(
+def query_cloudwatch_logs_insights(
     runtime: AwsRuntime,
     log_group_name: str,
     query: str,
@@ -153,7 +155,9 @@ def cloudwatch_logs_insights_query(
             limit=limit,
         )
         query_id = str(started.get("queryId") or "")
-        response = client.get_query_results(queryId=query_id) if query_id else {}
+        response = (
+            _poll_logs_insights_query(client, query_id) if query_id else {}
+        )
     except (BotoCoreError, ClientError) as exc:
         raise normalize_aws_error(exc, "logs.StartQuery") from exc
 
@@ -173,6 +177,28 @@ def cloudwatch_logs_insights_query(
         "results": results,
         "statistics": _logs_insights_statistics(response.get("statistics")),
     }
+
+
+# Bounded poll budget for `query_cloudwatch_logs_insights`. We sleep up to
+# ~6 seconds (12 * 0.5s) so most short queries return a terminal status
+# (Complete / Failed / Cancelled / Timeout) in one tool call; longer
+# queries return the most recent intermediate status and the `query_id`
+# so callers can re-poll without re-issuing the query.
+_LOGS_INSIGHTS_POLL_INTERVAL_SECONDS = 0.5
+_LOGS_INSIGHTS_POLL_MAX_ATTEMPTS = 12
+_LOGS_INSIGHTS_TERMINAL_STATUSES = {"Complete", "Failed", "Cancelled", "Timeout"}
+
+
+def _poll_logs_insights_query(client: Any, query_id: str) -> dict[str, Any]:
+    response: dict[str, Any] = {}
+    for attempt in range(_LOGS_INSIGHTS_POLL_MAX_ATTEMPTS):
+        response = client.get_query_results(queryId=query_id)
+        status = str(response.get("status") or "")
+        if status in _LOGS_INSIGHTS_TERMINAL_STATUSES:
+            return response
+        if attempt < _LOGS_INSIGHTS_POLL_MAX_ATTEMPTS - 1:
+            time.sleep(_LOGS_INSIGHTS_POLL_INTERVAL_SECONDS)
+    return response
 
 
 def check_cloudwatch_logs_writeability(
@@ -224,7 +250,7 @@ def list_cloudwatch_alarms(
         label="max_results",
     )
     client = runtime.client("cloudwatch", region=resolved_region)
-    request: dict[str, Any] = {"MaxRecords": min(limit, 100)}
+    request: dict[str, Any] = {"MaxRecords": page_size("cloudwatch.DescribeAlarms", limit)}
     if name_prefix:
         request["AlarmNamePrefix"] = name_prefix
 

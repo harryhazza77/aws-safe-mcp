@@ -68,7 +68,7 @@ When an AWS tool is called:
 
 This means the server can start when credentials are missing or expired. Users
 can authenticate later with `aws login`, `aws sso login`, an assumed-role
-profile, or environment credentials, then call `aws_auth_status` or any AWS tool
+profile, or environment credentials, then call `get_aws_auth_status` or any AWS tool
 without restarting the MCP server.
 
 ## Main Modules
@@ -86,7 +86,7 @@ without restarting the MCP server.
 
 The project has three broad kinds of tools:
 
-- Identity and auth tools, such as `aws_auth_status` and `aws_identity`.
+- Identity and auth tools, such as `get_aws_auth_status` and `get_aws_identity`.
 - Bounded inventory tools, such as `list_lambda_functions`, `list_s3_buckets`,
   and `list_step_functions`.
 - Higher-level investigation tools, such as `investigate_lambda_failure`,

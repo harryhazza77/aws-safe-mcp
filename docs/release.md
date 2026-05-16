@@ -149,8 +149,8 @@ async def main() -> None:
     )
 
     calls = [
-        ("aws_auth_status", {}),
-        ("aws_identity", {}),
+        ("get_aws_auth_status", {}),
+        ("get_aws_identity", {}),
         ("search_aws_resources", {"query": "test", "max_results": 5}),
         ("list_lambda_functions", {"max_results": 5}),
         ("list_step_functions", {"max_results": 5}),
@@ -179,7 +179,7 @@ PY
 - `get_lambda_summary` for one known or discovered Lambda.
 - `get_lambda_recent_errors` for that Lambda with `since_minutes: 60` and
   `max_events: 10`.
-- `dynamodb_table_summary` for one discovered table.
+- `get_dynamodb_table_summary` for one discovered table.
 - `get_api_gateway_summary` for one discovered API.
 - `explain_eventbridge_rule_dependencies` for one discovered rule with
   permission checks enabled.
@@ -187,8 +187,8 @@ PY
 Expected result:
 
 - The server initializes over stdio.
-- `aws_auth_status` reports `authenticated: true`.
-- `aws_identity` returns the same account as `aws sts get-caller-identity`.
+- `get_aws_auth_status` reports `authenticated: true`.
+- `get_aws_identity` returns the same account as `aws sts get-caller-identity`.
 - Tool listing includes the registered AWS tools.
 - Read-only list/search calls complete with bounded results or clear
   permission warnings.

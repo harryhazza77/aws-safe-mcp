@@ -571,13 +571,14 @@ def test_get_lambda_summary_never_returns_environment_values() -> None:
     assert "must-not-leak" not in str(result)
     assert "dev-queue" not in str(result)
     assert "dev-topic" not in str(result)
+    # SECRET_TOKEN is intentionally excluded: secret-like keys are
+    # skipped so the parser never inspects their values for hints.
     assert {
         (hint["key"], hint["likely_service"], hint["value_shape"])
         for hint in result["environment_dependency_hints"]
     } == {
         ("API_URL", "http", "url"),
         ("QUEUE_URL", "sqs", "queue_url"),
-        ("SECRET_TOKEN", "secretsmanager", "name_or_literal"),
         ("TOPIC_ARN", "sns", "arn"),
     }
     assert result["vpc"] == {
@@ -1154,7 +1155,8 @@ def test_investigate_lambda_timeout_root_cause_classifies_dependency_and_batch_r
         "downstream_dependency_bound",
         "queue_or_stream_batch_pressure",
     ]
-    assert result["signals"]["downstream_dependency_hint_count"] == 4
+    # SECRET_TOKEN hint is filtered (secret-like key); 3 remaining.
+    assert result["signals"]["downstream_dependency_hint_count"] == 3
     assert result["signals"]["event_source_retry_pressure"] is True
     assert "must-not-leak" not in str(result)
 
@@ -1201,7 +1203,8 @@ def test_explain_lambda_dependencies_returns_graph_and_permission_hints() -> Non
     )
     assert any("sqs:SendMessage" in hint["actions_to_check"] for hint in result["permission_hints"])
     assert any(edge["relationship"] == "may_depend_on" for edge in result["edges"])
-    assert result["summary"]["environment_dependency_hint_count"] == 4
+    # SECRET_TOKEN hint is filtered (secret-like key); 3 remaining.
+    assert result["summary"]["environment_dependency_hint_count"] == 3
     assert result["permission_checks"]["enabled"] is True
     checked_actions = {check["action"] for check in result["permission_checks"]["checks"]}
     assert "logs:PutLogEvents" in checked_actions

@@ -17,8 +17,8 @@ Use this page to find capabilities by user intent. See the
 
 Related tools:
 
-- `aws_auth_status`
-- `aws_identity`
+- `get_aws_auth_status`
+- `get_aws_identity`
 
 ## IAM Inspection
 
@@ -272,7 +272,7 @@ Related tools:
 - `get_s3_bucket_summary`
 - `check_s3_notification_destination_readiness`
 - `list_dynamodb_tables`
-- `dynamodb_table_summary`
+- `get_dynamodb_table_summary`
 - `check_dynamodb_stream_lambda_readiness`
 - `list_sqs_queues`
 - `get_sqs_queue_summary`
@@ -307,8 +307,8 @@ Related tools:
 - `get_cloudwatch_alarm_summary`
 - `find_cloudwatch_alarm_coverage_gaps`
 - `list_cloudwatch_log_groups`
-- `cloudwatch_log_search`
-- `cloudwatch_logs_insights_query`
+- `search_cloudwatch_logs`
+- `query_cloudwatch_logs_insights`
 - `check_cloudwatch_logs_writeability`
 - `get_lambda_recent_errors`
 - `investigate_lambda_failure`

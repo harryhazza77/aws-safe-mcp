@@ -9,12 +9,12 @@ from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.cloudwatch import (
     check_cloudwatch_logs_writeability,
-    cloudwatch_log_search,
-    cloudwatch_logs_insights_query,
     find_cloudwatch_alarm_coverage_gaps,
     get_cloudwatch_alarm_summary,
     list_cloudwatch_alarms,
     list_cloudwatch_log_groups,
+    query_cloudwatch_logs_insights,
+    search_cloudwatch_logs,
 )
 
 
@@ -178,10 +178,10 @@ class FakeRuntime:
         raise AssertionError(f"Unexpected service {service_name}")
 
 
-def test_cloudwatch_log_search_returns_truncated_bounded_events() -> None:
+def test_search_cloudwatch_logs_returns_truncated_bounded_events() -> None:
     runtime = FakeRuntime()
 
-    result = cloudwatch_log_search(
+    result = search_cloudwatch_logs(
         runtime,
         "/aws/lambda/dev-api",
         query="ERROR",
@@ -204,10 +204,10 @@ def test_cloudwatch_log_search_returns_truncated_bounded_events() -> None:
     assert runtime.logs_client.last_request["limit"] == 1
 
 
-def test_cloudwatch_logs_insights_query_returns_redacted_bounded_rows() -> None:
+def test_query_cloudwatch_logs_insights_returns_redacted_bounded_rows() -> None:
     runtime = FakeRuntime()
 
-    result = cloudwatch_logs_insights_query(
+    result = query_cloudwatch_logs_insights(
         runtime,
         "/aws/lambda/dev-api",
         "fields @timestamp, @message | filter @message like /ERROR/",
@@ -347,11 +347,11 @@ def test_find_cloudwatch_alarm_coverage_gaps_flags_actionless_existing_alarms() 
     assert any("Review actions" in check for check in result["suggested_next_checks"])
 
 
-def test_cloudwatch_log_search_follows_next_token_until_limit() -> None:
+def test_search_cloudwatch_logs_follows_next_token_until_limit() -> None:
     runtime = FakeRuntime()
     runtime.logs_client = PaginatedLogsClient()
 
-    result = cloudwatch_log_search(
+    result = search_cloudwatch_logs(
         runtime,
         "/aws/lambda/dev-api",
         query="ERROR",
@@ -365,16 +365,16 @@ def test_cloudwatch_log_search_follows_next_token_until_limit() -> None:
     assert runtime.logs_client.requests[1]["limit"] == 1
 
 
-def test_cloudwatch_log_search_rejects_empty_query() -> None:
+def test_search_cloudwatch_logs_rejects_empty_query() -> None:
     with pytest.raises(ToolInputError, match="query is required"):
-        cloudwatch_log_search(FakeRuntime(), "/aws/lambda/dev-api", query=" ")
+        search_cloudwatch_logs(FakeRuntime(), "/aws/lambda/dev-api", query=" ")
 
 
-def test_cloudwatch_logs_insights_query_rejects_broad_or_unmasked_queries() -> None:
+def test_query_cloudwatch_logs_insights_rejects_broad_or_unmasked_queries() -> None:
     with pytest.raises(ToolInputError, match="provided log_group_name"):
-        cloudwatch_logs_insights_query(FakeRuntime(), "/aws/lambda/dev-api", query="SOURCE '*'")
+        query_cloudwatch_logs_insights(FakeRuntime(), "/aws/lambda/dev-api", query="SOURCE '*'")
     with pytest.raises(ToolInputError, match="must not use unmask"):
-        cloudwatch_logs_insights_query(FakeRuntime(), "/aws/lambda/dev-api", query="fields unmask")
+        query_cloudwatch_logs_insights(FakeRuntime(), "/aws/lambda/dev-api", query="fields unmask")
 
 
 def test_get_cloudwatch_alarm_summary_rejects_empty_name() -> None:
@@ -382,27 +382,27 @@ def test_get_cloudwatch_alarm_summary_rejects_empty_name() -> None:
         get_cloudwatch_alarm_summary(FakeRuntime(), " ")
 
 
-def test_cloudwatch_log_search_rejects_invalid_limits() -> None:
+def test_search_cloudwatch_logs_rejects_invalid_limits() -> None:
     with pytest.raises(ToolInputError, match="since_minutes"):
-        cloudwatch_log_search(FakeRuntime(), "/aws/lambda/dev-api", query="ERROR", since_minutes=0)
+        search_cloudwatch_logs(FakeRuntime(), "/aws/lambda/dev-api", query="ERROR", since_minutes=0)
     with pytest.raises(ToolInputError, match="max_results"):
-        cloudwatch_log_search(FakeRuntime(), "/aws/lambda/dev-api", query="ERROR", max_results=0)
+        search_cloudwatch_logs(FakeRuntime(), "/aws/lambda/dev-api", query="ERROR", max_results=0)
 
 
-def test_cloudwatch_log_search_normalizes_aws_errors() -> None:
+def test_search_cloudwatch_logs_normalizes_aws_errors() -> None:
     runtime = FakeRuntime()
     runtime.logs_client = FailingLogsClient()
 
     with pytest.raises(AwsToolError, match="AWS logs.FilterLogEvents AccessDenied"):
-        cloudwatch_log_search(runtime, "/aws/lambda/dev-api", query="ERROR")
+        search_cloudwatch_logs(runtime, "/aws/lambda/dev-api", query="ERROR")
 
 
-def test_cloudwatch_logs_insights_query_normalizes_aws_errors() -> None:
+def test_query_cloudwatch_logs_insights_normalizes_aws_errors() -> None:
     runtime = FakeRuntime()
     runtime.logs_client = FailingLogsClient()
 
     with pytest.raises(AwsToolError, match="AWS logs.StartQuery AccessDenied"):
-        cloudwatch_logs_insights_query(
+        query_cloudwatch_logs_insights(
             runtime,
             "/aws/lambda/dev-api",
             query="fields @timestamp",

@@ -24,8 +24,8 @@ uvx --from /path/to/aws-sdk-mcp aws-safe-mcp \
   --config ~/.config/aws-safe-mcp/config.yaml
 ```
 
-Use `aws_auth_status` first. If it is not authenticated, refresh the AWS profile
-outside Cursor and call `aws_auth_status` again:
+Use `get_aws_auth_status` first. If it is not authenticated, refresh the AWS profile
+outside Cursor and call `get_aws_auth_status` again:
 
 ```bash
 aws login --profile dev

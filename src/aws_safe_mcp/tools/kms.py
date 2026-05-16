@@ -7,7 +7,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from aws_safe_mcp.auth import AwsRuntime
 from aws_safe_mcp.errors import ToolInputError, normalize_aws_error
-from aws_safe_mcp.tools.common import clamp_limit, isoformat, resolve_region
+from aws_safe_mcp.tools.common import clamp_limit, isoformat, page_size, resolve_region
 
 
 def list_kms_keys(
@@ -27,7 +27,7 @@ def list_kms_keys(
     marker: str | None = None
     try:
         while len(keys) < limit:
-            request: dict[str, Any] = {"Limit": min(limit, 100)}
+            request: dict[str, Any] = {"Limit": page_size("kms.ListKeys", limit)}
             if marker:
                 request["Marker"] = marker
             response = client.list_keys(**request)

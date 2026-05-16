@@ -6,7 +6,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from aws_safe_mcp.auth import AwsRuntime
 from aws_safe_mcp.errors import ToolInputError, normalize_aws_error
-from aws_safe_mcp.tools.common import clamp_limit, resolve_region
+from aws_safe_mcp.tools.common import clamp_limit, page_size, resolve_region
 
 
 def list_ecs_clusters(
@@ -23,7 +23,7 @@ def list_ecs_clusters(
     )
     client = runtime.client("ecs", region=resolved_region)
     try:
-        response = client.list_clusters(maxResults=min(limit, 100))
+        response = client.list_clusters(maxResults=page_size("ecs.ListClusters", limit))
     except (BotoCoreError, ClientError) as exc:
         raise normalize_aws_error(exc, "ecs.ListClusters") from exc
     clusters = response.get("clusterArns", [])[:limit]
@@ -51,7 +51,10 @@ def list_ecs_services(
     )
     client = runtime.client("ecs", region=resolved_region)
     try:
-        response = client.list_services(cluster=required_cluster, maxResults=min(limit, 100))
+        response = client.list_services(
+            cluster=required_cluster,
+            maxResults=page_size("ecs.ListServices", limit),
+        )
     except (BotoCoreError, ClientError) as exc:
         raise normalize_aws_error(exc, "ecs.ListServices") from exc
     services = response.get("serviceArns", [])[:limit]
