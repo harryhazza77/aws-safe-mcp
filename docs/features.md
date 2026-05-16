@@ -69,6 +69,8 @@ Related tools:
 - Audit async Lambda failure paths, including retry age/attempt settings,
   on-failure destinations, DLQ fallback, reserved concurrency, and recent
   throttles.
+- Investigate Lambda concurrency bottlenecks by correlating reserved
+  concurrency, recent throttles/invocations, and event source mapping state.
 - Map Lambda dependencies such as execution role, log group, VPC attachment,
   dead-letter target, aliases, event source mappings, and inferred permission
   checks.
@@ -109,6 +111,7 @@ Related tools:
 - `get_lambda_recent_errors`
 - `investigate_lambda_failure`
 - `audit_async_lambda_failure_path`
+- `investigate_lambda_concurrency_bottlenecks`
 - `explain_lambda_dependencies`
 - `explain_lambda_network_access`
 - `simulate_lambda_security_group_path`

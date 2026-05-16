@@ -329,6 +329,31 @@ def audit_async_lambda_failure_path(
     }
 
 
+def investigate_lambda_concurrency_bottlenecks(
+    runtime: AwsRuntime,
+    function_name: str,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_name = require_lambda_name(function_name)
+    summary = get_lambda_summary(runtime, required_name, region=resolved_region)
+    client = runtime.client("lambda", region=resolved_region)
+    warnings = _lambda_summary_warnings(summary)
+    concurrency = _lambda_reserved_concurrency(client, required_name, warnings)
+    event_sources = _lambda_event_source_summary(runtime, required_name, resolved_region)
+    signals = _lambda_concurrency_signals(summary, concurrency, event_sources)
+    return {
+        "function_name": required_name,
+        "region": resolved_region,
+        "summary": _lambda_concurrency_summary(signals),
+        "reserved_concurrency": concurrency,
+        "recent_metrics": summary.get("recent_metrics"),
+        "event_sources": event_sources,
+        "signals": signals,
+        "warnings": warnings,
+    }
+
+
 def explain_lambda_dependencies(
     runtime: AwsRuntime,
     function_name: str,
@@ -1987,6 +2012,41 @@ def _async_lambda_failure_summary(signals: dict[str, Any]) -> dict[str, Any]:
     if signals["throttles_last_hour"] > 0:
         risks.append("recent_throttles")
     return {"status": "needs_attention" if risks else "covered", "risks": risks}
+
+
+def _lambda_concurrency_signals(
+    summary: dict[str, Any],
+    concurrency: dict[str, Any],
+    event_sources: dict[str, Any],
+) -> dict[str, Any]:
+    metrics = summary.get("recent_metrics") or {}
+    mappings = event_sources.get("event_sources") or []
+    return {
+        "reserved_concurrency_configured": bool(concurrency.get("configured")),
+        "reserved_concurrency": concurrency.get("reserved_concurrent_executions"),
+        "reserved_concurrency_zero": concurrency.get("reserved_concurrent_executions") == 0,
+        "throttles_last_hour": _metric_value(metrics, "throttles"),
+        "invocations_last_hour": _metric_value(metrics, "invocations"),
+        "event_source_mapping_count": event_sources.get("count", 0),
+        "disabled_event_source_mapping_count": sum(
+            1 for item in mappings if str(item.get("state")).lower() != "enabled"
+        ),
+    }
+
+
+def _lambda_concurrency_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    risks = []
+    if signals["reserved_concurrency_zero"]:
+        risks.append("reserved_concurrency_zero")
+    if signals["throttles_last_hour"] > 0:
+        risks.append("recent_throttles")
+    if signals["disabled_event_source_mapping_count"] > 0:
+        risks.append("disabled_event_source_mappings")
+    return {
+        "status": "bottleneck_signals_detected" if risks else "no_bottleneck_signals_detected",
+        "risk_count": len(risks),
+        "risks": risks,
+    }
 
 
 def _async_lambda_failure_next_checks(signals: dict[str, Any]) -> list[str]:

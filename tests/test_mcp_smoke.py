@@ -68,6 +68,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "get_lambda_recent_errors",
         "investigate_lambda_failure",
         "audit_async_lambda_failure_path",
+        "investigate_lambda_concurrency_bottlenecks",
         "explain_lambda_dependencies",
         "explain_lambda_network_access",
         "simulate_lambda_security_group_path",

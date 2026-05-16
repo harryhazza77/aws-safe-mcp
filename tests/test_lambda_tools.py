@@ -19,6 +19,7 @@ from aws_safe_mcp.tools.lambda_tools import (
     get_lambda_event_source_mapping_diagnostics,
     get_lambda_recent_errors,
     get_lambda_summary,
+    investigate_lambda_concurrency_bottlenecks,
     investigate_lambda_failure,
     list_lambda_functions,
     prove_lambda_invocation_path,
@@ -306,6 +307,21 @@ class FakeLogsClient:
                 },
             ]
         }
+
+
+class ThrottledCloudWatchClient(FakeCloudWatchClient):
+    def get_metric_data(self, **kwargs: Any) -> dict[str, Any]:
+        response = super().get_metric_data(**kwargs)
+        for item in response["MetricDataResults"]:
+            if item["Id"] == "throttles":
+                item["Values"] = [3.0]
+                item["Timestamps"] = [datetime(2026, 1, 1, tzinfo=UTC)]
+        return response
+
+
+class ZeroConcurrencyLambdaClient(FakeLambdaClient):
+    def get_function_concurrency(self, **_: Any) -> dict[str, Any]:
+        return {"ReservedConcurrentExecutions": 0}
 
 
 class FakeIamClient:
@@ -602,6 +618,22 @@ def test_audit_async_lambda_failure_path_uses_dlq_as_fallback() -> None:
     assert result["diagnostic_summary"] == {"status": "covered", "risks": []}
     assert result["signals"]["failure_destination_configured"] is False
     assert result["signals"]["dead_letter_configured"] is True
+
+
+def test_investigate_lambda_concurrency_bottlenecks_reports_risks() -> None:
+    runtime = FakeRuntime()
+    runtime.lambda_client = ZeroConcurrencyLambdaClient()
+    runtime.cloudwatch_client = ThrottledCloudWatchClient()
+
+    result = investigate_lambda_concurrency_bottlenecks(runtime, "dev-api")
+
+    assert result["summary"] == {
+        "status": "bottleneck_signals_detected",
+        "risk_count": 2,
+        "risks": ["reserved_concurrency_zero", "recent_throttles"],
+    }
+    assert result["signals"]["throttles_last_hour"] == 3.0
+    assert result["reserved_concurrency"]["reserved_concurrent_executions"] == 0
 
 
 def test_get_lambda_alias_version_summary_reports_safe_traffic_metadata() -> None:

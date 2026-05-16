@@ -85,6 +85,9 @@ from aws_safe_mcp.tools.lambda_tools import (
     get_lambda_summary as get_lambda_summary_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
+    investigate_lambda_concurrency_bottlenecks as investigate_lambda_concurrency_bottlenecks_tool,
+)
+from aws_safe_mcp.tools.lambda_tools import (
     investigate_lambda_failure as investigate_lambda_failure_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
@@ -335,6 +338,19 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
     ) -> dict[str, object]:
         """Audit async Lambda retry, destination, DLQ, throttle, and concurrency posture."""
         return audit_async_lambda_failure_path_tool(
+            runtime,
+            function_name=function_name,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("investigate_lambda_concurrency_bottlenecks")
+    def investigate_lambda_concurrency_bottlenecks(
+        function_name: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Correlate Lambda throttles, reserved concurrency, and event sources."""
+        return investigate_lambda_concurrency_bottlenecks_tool(
             runtime,
             function_name=function_name,
             region=region,

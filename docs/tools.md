@@ -176,6 +176,16 @@ Inputs:
 - `function_name` required
 - `region` optional
 
+### `investigate_lambda_concurrency_bottlenecks`
+
+Correlates reserved concurrency, recent throttle/invocation metrics, and event
+source mapping state to flag likely Lambda delivery bottlenecks.
+
+Inputs:
+
+- `function_name` required
+- `region` optional
+
 ### `explain_lambda_dependencies`
 
 Maps one Lambda into a compact dependency graph. It combines configuration,
