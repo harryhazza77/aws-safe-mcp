@@ -198,7 +198,48 @@ Fail signal: CI red, extra files in the diff. Fix or close.
 
 Merge the PR into `main` once green.
 
-## 9. Tag and GitHub Release
+## 9. Second-reviewer sign-off
+
+A release of `aws-safe-mcp` to PyPI requires at least one approver in addition
+to the release author. The approver must tick off the safety-gate table from
+[`SECURITY.md`](../SECURITY.md) (no mutating verbs, redaction invariants,
+naming, allowlist, tool surface) and confirm the CHANGELOG entry exists per
+[`changelog-convention.md`](changelog-convention.md).
+
+Paste the following comment template into the release PR for the approver to
+fill in:
+
+```markdown
+Second-reviewer sign-off for vX.Y.Z.
+
+Safety-gate table (per SECURITY.md):
+
+- [ ] No mutating boto3 verbs added (test_invariants.py green).
+- [ ] Redaction invariants hold (test_redaction_properties.py green).
+- [ ] Tool naming conventions hold (test_naming_conventions.py green).
+- [ ] `allowed_account_ids` allowlist still mandatory and fail-closed.
+- [ ] Public tool surface change is intentional and matches semver bump.
+
+Changelog (per docs/changelog-convention.md):
+
+- [ ] `CHANGELOG.md` has a dated `## [X.Y.Z] - YYYY-MM-DD` section.
+- [ ] A fresh empty `## [Unreleased]` block sits on top.
+- [ ] Entries describe user-visible behavior, not internal refactors.
+
+Approved by: @<github-handle>
+```
+
+Expected:
+
+- A non-author approver has commented with every box ticked.
+- The PR has at least one approving review from that reviewer.
+
+Pass signal: the comment is recorded on the merged release PR with every box
+ticked.
+Fail signal: missing approver, unticked box, or CHANGELOG mismatch. Do not
+proceed to the tag step.
+
+## 10. Tag and GitHub Release
 
 ```bash
 git checkout main
@@ -216,7 +257,7 @@ Expected:
 Pass signal: `gh release view vX.Y.Z` shows the new release.
 Fail signal: tag missing, body empty, or release marked as draft.
 
-## 10. Publish
+## 11. Publish
 
 Trusted Publishing fires from the tag push via
 `.github/workflows/publish.yml`. Watch the run:
@@ -234,7 +275,7 @@ Pass signal: workflow exits success, PyPI shows the new release.
 Fail signal: workflow failure, missing wheel on PyPI. Go to
 [`rollback.md`](rollback.md).
 
-## 11. Post-publish smoke
+## 12. Post-publish smoke
 
 ```bash
 uvx aws-safe-mcp@X.Y.Z --help
@@ -263,7 +304,7 @@ Pass signal: the installed version behaves identically to the local build.
 Fail signal: import errors, wrong version string, or tool failures. Go to
 [`rollback.md`](rollback.md).
 
-## 12. Pass/fail summary
+## 13. Pass/fail summary
 
 Tick every box. If any box is unticked, do NOT publish (or yank what is
 already published using [`rollback.md`](rollback.md)) and open a tracking
@@ -277,9 +318,10 @@ issue.
 - [ ] 6. Live MCP smoke green.
 - [ ] 7. Version and CHANGELOG bumped.
 - [ ] 8. Release PR merged green.
-- [ ] 9. Tag and GitHub Release created.
-- [ ] 10. PyPI publish workflow green.
-- [ ] 11. Post-publish smoke green.
+- [ ] 9. Second-reviewer sign-off recorded.
+- [ ] 10. Tag and GitHub Release created.
+- [ ] 11. PyPI publish workflow green.
+- [ ] 12. Post-publish smoke green.
 
 If every box is ticked, the release is done. Announce per the project's
 communication channels and link the GitHub Release.

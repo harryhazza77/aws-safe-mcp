@@ -21,8 +21,61 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SERVER_PATH = REPO_ROOT / "src" / "aws_safe_mcp" / "server.py"
-TOOLS_DIR = REPO_ROOT / "src" / "aws_safe_mcp" / "tools"
+SRC_ROOT = REPO_ROOT / "src" / "aws_safe_mcp"
+SERVER_PATH = SRC_ROOT / "server.py"
+TOOLS_DIR = SRC_ROOT / "tools"
+AUTH_PATH = SRC_ROOT / "auth.py"
+S3_TOOL_PATH = TOOLS_DIR / "s3.py"
+DYNAMODB_TOOL_PATH = TOOLS_DIR / "dynamodb.py"
+
+# S3 verbs that read or transfer object payloads / directory content.
+# aws-safe-mcp must never pull S3 object bodies through the MCP surface;
+# even read-only data-plane verbs leak content into model context.
+S3_FORBIDDEN_VERBS: frozenset[str] = frozenset(
+    {
+        # Returns the object body bytes.
+        "get_object",
+        # Streams filtered object content (SQL over CSV/JSON/Parquet).
+        "select_object_content",
+        # Returns a BitTorrent file describing the object payload.
+        "get_object_torrent",
+        # HEAD can be used as a body-read probe via Range; forbid to keep
+        # the surface clean (metadata is covered by get_s3_bucket_summary).
+        "head_object",
+        # Mutating: initiates a Glacier restore (changes object state).
+        "restore_object",
+        # Downloads an object body to local disk.
+        "download_file",
+        # Downloads an object body to a file-like object.
+        "download_fileobj",
+        # Server-side copy: reads source body and writes a new object.
+        "copy_object",
+        # Catch-all for upload_file / upload_fileobj / upload_part / etc.
+        # Handled separately via prefix match below.
+    }
+)
+
+# DynamoDB verbs that return item bodies or stream records. aws-safe-mcp
+# exposes table metadata and dependency posture only; row data and stream
+# payloads must not flow through the MCP surface.
+DYNAMODB_FORBIDDEN_VERBS: frozenset[str] = frozenset(
+    {
+        # Returns every item in the table (or index).
+        "scan",
+        # Returns matching items for a partition/sort key expression.
+        "query",
+        # Returns a single item by primary key.
+        "get_item",
+        # Returns multiple items by primary key across tables.
+        "batch_get_item",
+        # Returns items inside a read transaction.
+        "transact_get_items",
+        # DynamoDB Streams: returns stream records (item images).
+        "get_records",
+        # DynamoDB Streams: opens a shard iterator that yields records.
+        "get_shard_iterator",
+    }
+)
 
 # Mutating boto3 verbs that must not appear on any client call in tool
 # modules. ``simulate_*`` is intentionally allowed because IAM policy
@@ -200,3 +253,182 @@ def _looks_like_sdk_call(line: str, verb: str) -> bool:
         r"(?:^|[\s(])([a-z_][a-z0-9_]*)\." + re.escape(verb) + r"\(", line
     )
     return not (receiver_match and receiver_match.group(1).startswith("_"))
+
+
+def _iter_source_files() -> list[Path]:
+    """Every ``.py`` under ``src/aws_safe_mcp/`` (recursive)."""
+    return sorted(
+        p
+        for p in SRC_ROOT.rglob("*.py")
+        if "__pycache__" not in p.parts and p.name != "__init__.py"
+    )
+
+
+def _function_param_names(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """All parameter names defined on a function (pos, kw-only, *args, **kwargs)."""
+    args = func.args
+    names: set[str] = set()
+    for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+        names.add(arg.arg)
+    if args.vararg is not None:
+        names.add(args.vararg.arg)
+    if args.kwarg is not None:
+        names.add(args.kwarg.arg)
+    return names
+
+
+def _is_boto_client_call(call: ast.Call) -> bool:
+    """``boto3.client(...)`` or ``<session>.client(...)`` style calls."""
+    func = call.func
+    if not isinstance(func, ast.Attribute) or func.attr != "client":
+        return False
+    receiver = func.value
+    if isinstance(receiver, ast.Name) and receiver.id == "boto3":
+        return True
+    # ``session.client(...)`` / ``self._session.client(...)`` etc.
+    return isinstance(receiver, (ast.Name, ast.Attribute))
+
+
+def test_no_raw_aws_call_passthrough() -> None:
+    """No generic AWS SDK passthrough tool may exist.
+
+    Two failure modes are rejected statically:
+
+    1. Any function named ``aws_call`` — the canonical name for a
+       service/operation passthrough — regardless of where it lives.
+    2. Any ``boto3.client(service, ...)`` or ``<session>.client(service,
+       ...)`` where ``service`` is a parameter of the enclosing function
+       rather than a string literal. Caller-controlled service names turn
+       the tool into an arbitrary AWS SDK gateway.
+
+    ``src/aws_safe_mcp/auth.py`` is exempt: ``AwsRuntime.client`` is the
+    one legitimate place that accepts a service-name argument.
+    """
+    violations: list[str] = []
+    for path in _iter_source_files():
+        if path == AUTH_PATH:
+            continue
+        tree = ast.parse(path.read_text())
+        visitor = _PassthroughVisitor(path, violations)
+        visitor.visit(tree)
+
+    assert not violations, (
+        "Generic AWS SDK passthrough is forbidden. aws-safe-mcp exposes "
+        "a fixed catalogue of read-only investigation tools, not an "
+        "arbitrary boto3 gateway. Offending sites:\n  " + "\n  ".join(violations)
+    )
+
+
+class _PassthroughVisitor(ast.NodeVisitor):
+    """Walk a module and record AWS-passthrough violations into ``sink``."""
+
+    def __init__(self, path: Path, sink: list[str]) -> None:
+        self._path = path
+        self._sink = sink
+        # Parameter scope stack so ``boto3.client(<param>)`` can be detected
+        # as caller-controlled.
+        self._func_stack: list[set[str]] = []
+
+    def _visit_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        if node.name == "aws_call":
+            self._sink.append(
+                f"{self._path.relative_to(REPO_ROOT)}:{node.lineno}: "
+                "function named 'aws_call' is a forbidden generic "
+                "AWS SDK passthrough"
+            )
+        self._func_stack.append(_function_param_names(node))
+        try:
+            self.generic_visit(node)
+        finally:
+            self._func_stack.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_func(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_func(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if (
+            _is_boto_client_call(node)
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+            and any(node.args[0].id in scope for scope in self._func_stack)
+        ):
+            self._sink.append(
+                f"{self._path.relative_to(REPO_ROOT)}:{node.lineno}: "
+                f"boto3/session .client() called with "
+                f"parameter '{node.args[0].id}' as service name; "
+                "service must be a string literal"
+            )
+        self.generic_visit(node)
+
+
+def _verb_call_lines(source: str, verbs: frozenset[str]) -> list[tuple[str, int]]:
+    """Return ``(verb, line_no)`` pairs for ``<receiver>.<verb>(`` calls.
+
+    Mirrors the style of ``test_no_mutating_boto3_calls``: attribute-style
+    SDK calls only, skipping comments and helper functions whose receiver
+    starts with ``_``.
+    """
+    pattern = re.compile(r"\.([a-z][a-z0-9_]*)\(")
+    hits: list[tuple[str, int]] = []
+    lines = source.splitlines()
+    for line_num, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        for match in pattern.finditer(line):
+            verb = match.group(1)
+            if verb not in verbs:
+                continue
+            if _looks_like_sdk_call(line, verb):
+                hits.append((verb, line_num))
+    return hits
+
+
+def test_no_s3_object_body_or_directory_listing_with_content() -> None:
+    """``s3.py`` must not call any data-plane object verb.
+
+    The S3 tool surface only exposes bucket-level posture (encryption,
+    public access, lifecycle, notifications). Pulling object bodies — or
+    any verb that streams object content — through the MCP surface would
+    leak customer data into model context.
+    """
+    source = S3_TOOL_PATH.read_text()
+    hits = _verb_call_lines(source, S3_FORBIDDEN_VERBS)
+
+    # Additionally reject any ``upload_*`` verb via prefix match.
+    pattern = re.compile(r"\.(upload_[a-z0-9_]*)\(")
+    for line_num, line in enumerate(source.splitlines(), start=1):
+        if line.strip().startswith("#"):
+            continue
+        for match in pattern.finditer(line):
+            verb = match.group(1)
+            if _looks_like_sdk_call(line, verb):
+                hits.append((verb, line_num))
+
+    assert not hits, (
+        f"{S3_TOOL_PATH.name} must not call S3 data-plane verbs. "
+        f"Offending calls: {hits}. "
+        "aws-safe-mcp exposes bucket posture only; object bodies and "
+        "directory content listings with body data are out of scope."
+    )
+
+
+def test_no_dynamodb_item_or_stream_record_reads() -> None:
+    """``dynamodb.py`` must not read items or stream records.
+
+    The DynamoDB tool surface exposes table metadata, capacity, stream
+    configuration, and dependency posture — never row data. Reads of
+    item bodies (scan/query/get_item/...) or stream records would leak
+    customer data through the MCP surface.
+    """
+    source = DYNAMODB_TOOL_PATH.read_text()
+    hits = _verb_call_lines(source, DYNAMODB_FORBIDDEN_VERBS)
+    assert not hits, (
+        f"{DYNAMODB_TOOL_PATH.name} must not call DynamoDB item-read or "
+        f"stream-read verbs. Offending calls: {hits}. "
+        "Expose metadata and posture only; item bodies and stream "
+        "records are out of scope for aws-safe-mcp."
+    )

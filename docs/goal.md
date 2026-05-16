@@ -43,3 +43,7 @@ the same emulator via the `endpoint_url` override in the config file.
 `/goal` means continue the full workstream; if the run stops before the
 backlog is empty, report the exact stopping point, repository state, completed
 commits, and the next backlog item.
+
+**Role of this file:** goal.md is the workstream replay script. For long-term
+strategy see [vision.md](vision.md). For the prioritized candidate queue see
+[backlog.md](backlog.md).

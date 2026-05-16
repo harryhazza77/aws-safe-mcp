@@ -138,3 +138,7 @@ What would justify reopening a scope decision.
 Candidates that were considered and rejected or deferred are recorded in
 [decisions.md](decisions.md) so they are not relitigated. When a planning
 discussion ends with "no, because...", capture it there.
+
+**Role of this file:** vision.md states the 12-month strategy. For the
+prioritized work queue see [backlog.md](backlog.md). For the live execution
+prompt see [goal.md](goal.md).
