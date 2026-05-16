@@ -89,6 +89,8 @@ Related tools:
   endpoint security groups make private AWS API access plausible.
 - Simulate Lambda security-group paths to a target CIDR and port, including
   Lambda egress and optional target security-group ingress from Lambda subnets.
+- Flag DNS risks for private-DNS URL targets and interface VPC endpoints with
+  private DNS disabled, without reading DNS records or resolver rules.
 - Check whether a Lambda execution role appears allowed to perform a specific
   IAM action on a specific resource ARN.
 - Check whether one Lambda appears able to send messages to one SQS queue,

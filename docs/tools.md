@@ -205,6 +205,8 @@ private DNS/network, or AWS service endpoint and maps it to the inferred egress
 posture. It also reports redacted URL-like environment targets by key only and
 summarizes inferred AWS API reachability through VPC endpoints, private DNS,
 endpoint policy presence, endpoint security groups, or public egress fallback.
+DNS risk output highlights private-DNS URL targets and interface endpoints with
+private DNS disabled.
 
 This tool reports network-layer possibility, not proof that function code
 actually calls a destination.

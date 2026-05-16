@@ -716,6 +716,7 @@ def test_explain_lambda_network_access_reports_nat_internet_path() -> None:
     assert result["summary"]["internet_access"] == "yes"
     assert result["target_reachability"]["summary"]["status"] == "likely_reachable"
     assert result["target_reachability"]["environment_url_target_count"] == 2
+    assert result["dns_risks"]["private_dns_target_count"] == 1
     assert result["egress"]["internet"]["via"] == ["nat-1"]
     assert {path["from_subnet"] for path in result["paths"] if path["verdict"] == "reachable"} == {
         "subnet-1",
@@ -846,6 +847,36 @@ def test_explain_lambda_network_access_reports_private_aws_api_endpoint() -> Non
         "policy_configured": True,
         "security_group_count": 1,
     }
+
+
+def test_explain_lambda_network_access_flags_endpoint_private_dns_risk() -> None:
+    runtime = FakeRuntime()
+    runtime.ec2_client = FakeEc2Client(
+        endpoints=[
+            {
+                "VpcEndpointId": "vpce-sqs",
+                "VpcEndpointType": "Interface",
+                "ServiceName": "com.amazonaws.eu-west-2.sqs",
+                "State": "available",
+                "PrivateDnsEnabled": False,
+                "Groups": [{"GroupId": "sg-1"}],
+            }
+        ],
+    )
+
+    result = explain_lambda_network_access(runtime, "dev-api")
+
+    assert result["dns_risks"]["summary"] == {
+        "status": "risks_detected",
+        "risk_count": 2,
+        "risks": [
+            "private_dns_targets_need_vpc_resolution",
+            "interface_endpoint_private_dns_disabled",
+        ],
+    }
+    assert result["dns_risks"]["endpoint_private_dns_risks"] == [
+        {"service": "sqs", "endpoint_id": "vpce-sqs", "risk": "private_dns_disabled"}
+    ]
 
 
 def test_explain_lambda_network_access_validates_target_url() -> None:

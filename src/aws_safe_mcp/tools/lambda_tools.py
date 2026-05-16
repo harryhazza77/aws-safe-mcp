@@ -457,6 +457,7 @@ def explain_lambda_network_access(
             network_result=result,
         )
         result["aws_api_reachability"] = _lambda_aws_api_reachability(env_url_targets, result)
+        result["dns_risks"] = _lambda_dns_risks(env_url_targets, result)
         return result
 
     ec2_client = runtime.client("ec2", region=resolved_region)
@@ -496,6 +497,7 @@ def explain_lambda_network_access(
         network_result=result,
     )
     result["aws_api_reachability"] = _lambda_aws_api_reachability(env_url_targets, result)
+    result["dns_risks"] = _lambda_dns_risks(env_url_targets, result)
     return result
 
 
@@ -1101,6 +1103,47 @@ def _lambda_aws_api_service_reachability(
         "status": "blocked",
         "endpoint_id": None,
         "reason": "no_available_vpc_endpoint_and_no_internet_egress",
+    }
+
+
+def _lambda_dns_risks(
+    env_url_targets: list[dict[str, Any]],
+    network_result: dict[str, Any],
+) -> dict[str, Any]:
+    private_targets = [
+        target for target in env_url_targets if target.get("host_kind") == "private_dns"
+    ]
+    endpoints = network_result.get("controls", {}).get("endpoints", [])
+    endpoint_risks = [
+        {
+            "service": endpoint.get("service"),
+            "endpoint_id": endpoint.get("via"),
+            "risk": "private_dns_disabled",
+        }
+        for endpoint in endpoints
+        if endpoint.get("endpoint_type") == "Interface"
+        and endpoint.get("private_dns_enabled") is False
+    ]
+    risks = []
+    if private_targets:
+        risks.append("private_dns_targets_need_vpc_resolution")
+    if endpoint_risks:
+        risks.append("interface_endpoint_private_dns_disabled")
+    return {
+        "summary": {
+            "status": "risks_detected" if risks else "no_static_dns_risks_detected",
+            "risk_count": len(risks),
+            "risks": risks,
+        },
+        "private_dns_target_count": len(private_targets),
+        "private_dns_targets": [
+            {"key": target.get("key"), "service": target.get("service")}
+            for target in private_targets
+        ],
+        "endpoint_private_dns_risks": endpoint_risks,
+        "notes": [
+            "Static analysis cannot see Route 53 private hosted zone records or resolver rules."
+        ],
     }
 
 

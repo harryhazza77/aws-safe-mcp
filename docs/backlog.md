@@ -30,34 +30,28 @@ current public tool surface in `src/aws_safe_mcp/server.py` and
 `src/aws_safe_mcp/tools/*`; scopes focus on new diagnostic value beyond existing
 single-resource summaries, dependency graphs, and permission checks.
 
-1. **DNS and split-horizon risk detector** _(Large)_
-    - For URL env vars and private hosted zone records, inspect VPC DNS
-      settings, resolver rules, private hosted zone associations, interface
-      endpoint private DNS, and conflicting public/private names.
-    - Add DNS-specific reasoning not present in current Lambda network checks.
-
-2. **Concurrency bottleneck investigator** _(Large)_
+1. **Concurrency bottleneck investigator** _(Large)_
     - Correlate Lambda reserved/provisioned concurrency, account concurrency,
       event source maximum concurrency, SQS backlog age, throttles, async retry
       age, and downstream service limits to explain delivery stalls.
     - Compose existing Lambda, SQS, CloudWatch metric, and event source
       diagnostics into a capacity-focused workflow.
 
-3. **Cross-account invocation analyzer** _(Large)_
+2. **Cross-account invocation analyzer** _(Large)_
     - When a Lambda references queues, topics, buses, buckets, or functions in
       another account, check both sides of IAM/resource policy trust and flag
       missing principals, source ARN/account conditions, organization
       condition mismatches, KMS gaps, and partition/region drift.
     - Extend current same-account and service-specific permission checks.
 
-4. **Dead-letter and retry topology audit** _(XLarge)_
+3. **Dead-letter and retry topology audit** _(XLarge)_
     - Build a graph of Lambda destinations, SQS redrive policies, SNS/SQS
       DLQs, EventBridge DLQs, and Step Functions catches. Flag loops,
       unconsumed DLQs, too-low max receive counts, and missing alarms.
     - Compose existing DLQ fragments from Lambda, SQS, SNS, EventBridge, Step
       Functions, and CloudWatch alarm tools into one topology audit.
 
-5. **End-to-end transaction trace plan** _(XLarge)_
+4. **End-to-end transaction trace plan** _(XLarge)_
     - Given a seed resource name, stitch likely path across API Gateway,
       EventBridge, Step Functions, Lambda, SQS, SNS, DynamoDB streams, and logs.
       Return ordered checks, probable breakpoints, and safe commands/tools to
@@ -65,7 +59,7 @@ single-resource summaries, dependency graphs, and permission checks.
     - Extend current event-driven flow stitching and incident brief beyond
       EventBridge-centered paths.
 
-6. **Risk-scored dependency health summary** _(XLarge)_
+5. **Risk-scored dependency health summary** _(XLarge)_
     - For an application prefix, assemble discovered resources into a redacted
       graph and score each edge for callability, network reachability, policy
       completeness, retry safety, observability, and drift from expected naming
