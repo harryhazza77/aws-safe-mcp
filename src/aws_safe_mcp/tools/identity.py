@@ -5,12 +5,12 @@ import re
 from aws_safe_mcp.auth import AwsIdentity, AwsRuntime
 
 
-def aws_identity(runtime: AwsRuntime) -> dict[str, str | bool | None]:
+def get_aws_identity(runtime: AwsRuntime) -> dict[str, str | bool | None]:
     """Return the validated AWS caller identity for this MCP server session."""
     return runtime.require_identity().as_dict()
 
 
-def aws_auth_status(runtime: AwsRuntime) -> dict[str, str | bool | None]:
+def get_aws_auth_status(runtime: AwsRuntime) -> dict[str, str | bool | None]:
     """Return a compact, human-friendly authentication status."""
     identity = runtime.refresh_identity()
     if identity is None:

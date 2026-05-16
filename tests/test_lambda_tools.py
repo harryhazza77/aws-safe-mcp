@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -9,13 +10,24 @@ from botocore.exceptions import ClientError
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.lambda_tools import (
+    analyze_cross_account_lambda_invocation,
+    audit_async_lambda_failure_path,
     check_lambda_permission_path,
+    check_lambda_to_sqs_sendability,
     explain_lambda_dependencies,
     explain_lambda_network_access,
+    get_lambda_alias_version_summary,
+    get_lambda_event_source_mapping_diagnostics,
     get_lambda_recent_errors,
     get_lambda_summary,
+    investigate_lambda_cold_start_init,
+    investigate_lambda_concurrency_bottlenecks,
+    investigate_lambda_deployment_drift,
     investigate_lambda_failure,
+    investigate_lambda_timeout_root_cause,
     list_lambda_functions,
+    prove_lambda_invocation_path,
+    simulate_lambda_security_group_path,
 )
 
 
@@ -79,12 +91,16 @@ class FakeLambdaClient:
             "LastModified": "2026-01-01T00:00:00.000+0000",
             "MemorySize": 256,
             "Timeout": 30,
+            "CodeSize": 12345,
             "Role": "arn:aws:iam::123456789012:role/dev-lambda",
             "Description": "API handler",
             "Environment": {
                 "Variables": {
+                    "API_URL": "https://api.internal",
+                    "QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/123456789012/dev-queue",
                     "PUBLIC_NAME": "example",
                     "SECRET_TOKEN": "must-not-leak",
+                    "TOPIC_ARN": "arn:aws:sns:eu-west-2:123456789012:dev-topic",
                 }
             },
             "VpcConfig": {
@@ -98,7 +114,108 @@ class FakeLambdaClient:
         }
 
     def list_aliases(self, **_: Any) -> dict[str, Any]:
-        return {"Aliases": [{"Name": "live", "FunctionVersion": "3"}]}
+        return {
+            "Aliases": [
+                {
+                    "Name": "live",
+                    "FunctionVersion": "3",
+                    "Description": "production traffic",
+                    "RevisionId": "rev-live",
+                    "RoutingConfig": {"AdditionalVersionWeights": {"4": 0.1}},
+                }
+            ]
+        }
+
+    def list_versions_by_function(self, **_: Any) -> dict[str, Any]:
+        return {
+            "Versions": [
+                {"Version": "$LATEST"},
+                {
+                    "Version": "3",
+                    "Runtime": "python3.12",
+                    "Description": "stable",
+                    "LastModified": "2026-01-01T00:00:00.000+0000",
+                    "MemorySize": 256,
+                    "Timeout": 30,
+                    "State": "Active",
+                    "LastUpdateStatus": "Successful",
+                    "CodeSize": 12345,
+                },
+                {
+                    "Version": "4",
+                    "Runtime": "python3.12",
+                    "Description": "canary",
+                    "LastModified": "2026-01-02T00:00:00.000+0000",
+                    "MemorySize": 256,
+                    "Timeout": 30,
+                    "State": "Active",
+                    "LastUpdateStatus": "Successful",
+                    "CodeSize": 12346,
+                },
+            ]
+        }
+
+    def get_provisioned_concurrency_config(
+        self,
+        FunctionName: str,
+        Qualifier: str,
+    ) -> dict[str, Any]:
+        assert FunctionName == "dev-api"
+        if Qualifier != "live":
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "ProvisionedConcurrencyConfigNotFoundException",
+                        "Message": "not configured",
+                    }
+                },
+                "GetProvisionedConcurrencyConfig",
+            )
+        return {
+            "RequestedProvisionedConcurrentExecutions": 2,
+            "AvailableProvisionedConcurrentExecutions": 2,
+            "AllocatedProvisionedConcurrentExecutions": 2,
+            "Status": "READY",
+        }
+
+    def get_policy(self, **_: Any) -> dict[str, Any]:
+        return {
+            "Policy": json.dumps(
+                {
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {"Service": "apigateway.amazonaws.com"},
+                            "Action": "lambda:InvokeFunction",
+                            "Resource": [
+                                "arn:aws:lambda:eu-west-2:123456789012:function:dev-api",
+                                "arn:aws:lambda:eu-west-2:123456789012:function:dev-api:$LATEST",
+                            ],
+                            "Condition": {
+                                "ArnLike": {
+                                    "AWS:SourceArn": (
+                                        "arn:aws:execute-api:eu-west-2:123456789012:"
+                                        "api-id/*/GET/dev"
+                                    )
+                                }
+                            },
+                        }
+                    ]
+                }
+            )
+        }
+
+    def get_function_event_invoke_config(self, **_: Any) -> dict[str, Any]:
+        return {
+            "MaximumRetryAttempts": 1,
+            "MaximumEventAgeInSeconds": 3600,
+            "DestinationConfig": {
+                "OnFailure": {"Destination": "arn:aws:sqs:eu-west-2:123456789012:async-dlq"}
+            },
+        }
+
+    def get_function_concurrency(self, **_: Any) -> dict[str, Any]:
+        return {"ReservedConcurrentExecutions": 5}
 
     def list_event_source_mappings(self, **_: Any) -> dict[str, Any]:
         return {
@@ -106,8 +223,18 @@ class FakeLambdaClient:
                 {
                     "UUID": "mapping-1",
                     "State": "Enabled",
+                    "StateTransitionReason": "User action",
+                    "LastProcessingResult": "OK",
                     "EventSourceArn": "arn:aws:sqs:eu-west-2:123456789012:queue",
+                    "FunctionArn": "arn:aws:lambda:eu-west-2:123456789012:function:dev-api",
                     "BatchSize": 10,
+                    "MaximumBatchingWindowInSeconds": 5,
+                    "FunctionResponseTypes": ["ReportBatchItemFailures"],
+                    "DestinationConfig": {
+                        "OnFailure": {"Destination": "arn:aws:sqs:eu-west-2:123456789012:esm-dlq"}
+                    },
+                    "ScalingConfig": {"MaximumConcurrency": 3},
+                    "FilterCriteria": {"Filters": [{"Pattern": '{"secret":"must-not-leak"}'}]},
                 }
             ]
         }
@@ -131,6 +258,7 @@ class FakeCloudWatchClient:
             "throttles",
             "invocations",
             "duration",
+            "init_duration",
         ]
         timestamp = datetime(2026, 1, 1, tzinfo=UTC)
         return {
@@ -154,6 +282,12 @@ class FakeCloudWatchClient:
                     "Timestamps": [timestamp],
                     "StatusCode": "Complete",
                 },
+                {
+                    "Id": "init_duration",
+                    "Values": [900.0],
+                    "Timestamps": [timestamp],
+                    "StatusCode": "Complete",
+                },
             ]
         }
 
@@ -164,26 +298,54 @@ class FakeLogsClient:
 
     def filter_log_events(self, **kwargs: Any) -> dict[str, Any]:
         self.last_request = kwargs
-        return {
-            "events": [
-                {
-                    "timestamp": 1_767_225_600_000,
-                    "logStreamName": "2026/01/01/[$LATEST]abc",
-                    "message": "ERROR request 123 failed for user 456\nTraceback line",
-                },
-                {
-                    "timestamp": 1_767_225_660_000,
-                    "logStreamName": "2026/01/01/[$LATEST]abc",
-                    "message": "ERROR request 789 failed for user 111",
-                },
-                {
-                    "timestamp": 1_767_225_720_000,
-                    "logStreamName": "2026/01/01/[$LATEST]def",
-                    "message": "AccessDeniedException: not authorized to perform s3:GetObject "
-                    "secret=must-not-leak " + ("x" * 250),
-                },
-            ]
-        }
+        error_events = [
+            {
+                "timestamp": 1_767_225_600_000,
+                "logStreamName": "2026/01/01/[$LATEST]abc",
+                "message": "ERROR request 123 failed for user 456\nTraceback line",
+            },
+            {
+                "timestamp": 1_767_225_660_000,
+                "logStreamName": "2026/01/01/[$LATEST]abc",
+                "message": "ERROR request 789 failed for user 111",
+            },
+            {
+                "timestamp": 1_767_225_720_000,
+                "logStreamName": "2026/01/01/[$LATEST]def",
+                "message": "AccessDeniedException: not authorized to perform s3:GetObject "
+                "secret=must-not-leak " + ("x" * 250),
+            },
+        ]
+        init_events = [
+            {
+                "timestamp": 1_767_225_780_000,
+                "logStreamName": "2026/01/01/[$LATEST]init",
+                "message": "INIT_START Runtime Version python3.12",
+            },
+            {
+                "timestamp": 1_767_225_790_000,
+                "logStreamName": "2026/01/01/[$LATEST]init",
+                "message": "REPORT RequestId abc Init Duration: 900.00 ms Duration: 10.00 ms",
+            },
+        ]
+        if "Init Duration" in str(kwargs.get("filterPattern")):
+            return {"events": init_events}
+        return {"events": error_events}
+
+
+class ThrottledCloudWatchClient(FakeCloudWatchClient):
+    def get_metric_data(self, **kwargs: Any) -> dict[str, Any]:
+        response = super().get_metric_data(**kwargs)
+        for item in response["MetricDataResults"]:
+            if item["Id"] == "throttles":
+                item["Values"] = [3.0]
+                item["Timestamps"] = [datetime(2026, 1, 1, tzinfo=UTC)]
+        return response
+
+
+class ZeroConcurrencyLambdaClient(FakeLambdaClient):
+    def get_function_concurrency(self, **_: Any) -> dict[str, Any]:
+        return {"ReservedConcurrentExecutions": 0}
 
 
 class FakeIamClient:
@@ -229,7 +391,6 @@ class FakeIamClient:
         ActionNames: list[str],
         ResourceArns: list[str],
     ) -> dict[str, Any]:
-        assert PolicySourceArn == "arn:aws:iam::123456789012:role/dev-lambda"
         self.simulation_requests.append(
             {
                 "PolicySourceArn": PolicySourceArn,
@@ -265,7 +426,10 @@ class FakeEc2Client:
         network_acls: list[dict[str, Any]] | None = None,
         endpoints: list[dict[str, Any]] | None = None,
     ) -> None:
-        self.subnets = subnets or [{"SubnetId": "subnet-1"}, {"SubnetId": "subnet-2"}]
+        self.subnets = subnets or [
+            {"SubnetId": "subnet-1", "CidrBlock": "10.0.1.0/24"},
+            {"SubnetId": "subnet-2", "CidrBlock": "10.0.2.0/24"},
+        ]
         self.security_groups = security_groups or [
             {
                 "GroupId": "sg-1",
@@ -309,6 +473,28 @@ class FakeEc2Client:
         return {"VpcEndpoints": self.endpoints}
 
 
+class FakeSqsClient:
+    def get_queue_attributes(self, **_: Any) -> dict[str, Any]:
+        return {
+            "Attributes": {
+                "QueueArn": "arn:aws:sqs:eu-west-2:123456789012:dev-queue",
+                "Policy": json.dumps(
+                    {
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Principal": {"AWS": "arn:aws:iam::123456789012:role/dev-lambda"},
+                                "Action": "sqs:SendMessage",
+                                "Resource": "arn:aws:sqs:eu-west-2:123456789012:dev-queue",
+                            }
+                        ]
+                    }
+                ),
+                "SqsManagedSseEnabled": "true",
+            }
+        }
+
+
 class FakeRuntime:
     def __init__(self) -> None:
         self.config = AwsSafeConfig(
@@ -323,6 +509,7 @@ class FakeRuntime:
         self.logs_client = FakeLogsClient()
         self.iam_client = FakeIamClient()
         self.ec2_client = FakeEc2Client()
+        self.sqs_client = FakeSqsClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
         assert region == "eu-west-2"
@@ -336,6 +523,8 @@ class FakeRuntime:
             return self.iam_client
         if service_name == "ec2":
             return self.ec2_client
+        if service_name == "sqs":
+            return self.sqs_client
         raise AssertionError(f"Unexpected service {service_name}")
 
 
@@ -368,8 +557,26 @@ def test_list_lambda_functions_normalizes_aws_errors() -> None:
 def test_get_lambda_summary_never_returns_environment_values() -> None:
     result = get_lambda_summary(FakeRuntime(), "dev-api")
 
-    assert result["environment_variable_keys"] == ["PUBLIC_NAME", "SECRET_TOKEN"]
+    assert result["environment_variable_keys"] == [
+        "API_URL",
+        "PUBLIC_NAME",
+        "QUEUE_URL",
+        "SECRET_TOKEN",
+        "TOPIC_ARN",
+    ]
     assert "must-not-leak" not in str(result)
+    assert "dev-queue" not in str(result)
+    assert "dev-topic" not in str(result)
+    # SECRET_TOKEN is intentionally excluded: secret-like keys are
+    # skipped so the parser never inspects their values for hints.
+    assert {
+        (hint["key"], hint["likely_service"], hint["value_shape"])
+        for hint in result["environment_dependency_hints"]
+    } == {
+        ("API_URL", "http", "url"),
+        ("QUEUE_URL", "sqs", "queue_url"),
+        ("TOPIC_ARN", "sns", "arn"),
+    }
     assert result["vpc"] == {
         "enabled": True,
         "vpc_id": "vpc-123",
@@ -412,6 +619,167 @@ def test_get_lambda_summary_reports_metric_data_warnings() -> None:
     assert result["recent_metrics"]["warnings"] == ["Metric errors returned status PartialData"]
 
 
+def test_audit_async_lambda_failure_path_reports_destination_and_concurrency() -> None:
+    result = audit_async_lambda_failure_path(FakeRuntime(), "dev-api")
+
+    assert result["async_invoke_config"]["maximum_retry_attempts"] == 1
+    assert result["async_invoke_config"]["on_failure_arn"] == (
+        "arn:aws:sqs:eu-west-2:123456789012:async-dlq"
+    )
+    assert result["reserved_concurrency"]["reserved_concurrent_executions"] == 5
+    assert result["retry_topology"]["summary"]["risk_count"] == 0
+    assert any(edge["type"] == "async_on_failure" for edge in result["retry_topology"]["edges"])
+    assert any(edge["type"] == "lambda_dlq" for edge in result["retry_topology"]["edges"])
+    assert result["signals"]["failure_destination_configured"] is True
+    assert result["diagnostic_summary"] == {"status": "covered", "risks": []}
+
+
+def test_audit_async_lambda_failure_path_uses_dlq_as_fallback() -> None:
+    runtime = FakeRuntime()
+    runtime.lambda_client = MissingAsyncDestinationLambdaClient()
+
+    result = audit_async_lambda_failure_path(runtime, "dev-api")
+
+    assert result["diagnostic_summary"] == {"status": "covered", "risks": []}
+    assert result["signals"]["failure_destination_configured"] is False
+    assert result["signals"]["dead_letter_configured"] is True
+
+
+def test_investigate_lambda_concurrency_bottlenecks_reports_risks() -> None:
+    runtime = FakeRuntime()
+    runtime.lambda_client = ZeroConcurrencyLambdaClient()
+    runtime.cloudwatch_client = ThrottledCloudWatchClient()
+
+    result = investigate_lambda_concurrency_bottlenecks(runtime, "dev-api")
+
+    assert result["summary"] == {
+        "status": "bottleneck_signals_detected",
+        "risk_count": 2,
+        "risks": ["reserved_concurrency_zero", "recent_throttles"],
+    }
+    assert result["signals"]["throttles_last_hour"] == 3.0
+    assert result["reserved_concurrency"]["reserved_concurrent_executions"] == 0
+
+
+def test_get_lambda_alias_version_summary_reports_safe_traffic_metadata() -> None:
+    result = get_lambda_alias_version_summary(FakeRuntime(), "dev-api")
+
+    assert result["summary"] == {
+        "alias_count": 1,
+        "published_version_count": 2,
+        "weighted_alias_count": 1,
+        "provisioned_concurrency_configured": True,
+        "policy_statement_count": 1,
+        "warning_count": 0,
+    }
+    assert result["aliases"] == [
+        {
+            "name": "live",
+            "function_version": "3",
+            "description": "production traffic",
+            "revision_id": "rev-live",
+            "additional_version_weights": [{"function_version": "4", "weight": 0.1}],
+        }
+    ]
+    assert [version["version"] for version in result["versions"]] == ["3", "4"]
+    assert result["provisioned_concurrency"]["configs"][0]["qualifier"] == "live"
+    assert result["policy_hints"]["service_principals"] == ["apigateway.amazonaws.com"]
+    assert result["policy_hints"]["actions"] == ["lambda:InvokeFunction"]
+    assert "Statement" not in result["policy_hints"]
+
+
+def test_get_lambda_alias_version_summary_keeps_optional_failures_best_effort() -> None:
+    runtime = FakeRuntime()
+    runtime.lambda_client = FailingAliasVersionLambdaClient()
+
+    result = get_lambda_alias_version_summary(runtime, "dev-api")
+
+    assert result["summary"]["alias_count"] == 0
+    assert result["summary"]["published_version_count"] == 0
+    assert result["policy_hints"]["available"] is False
+    assert len(result["warnings"]) == 3
+
+
+def test_investigate_lambda_deployment_drift_flags_alias_and_latest_risks() -> None:
+    result = investigate_lambda_deployment_drift(FakeRuntime(), "dev-api")
+
+    assert result["summary"] == {
+        "status": "drift_signals_detected",
+        "risk_count": 3,
+        "risks": [
+            "stale_aliases",
+            "weighted_aliases_present",
+            "latest_version_policy_exposed",
+        ],
+    }
+    assert result["signals"]["latest_published_version"] == "4"
+    assert result["signals"]["stale_aliases"] == ["live"]
+    assert result["signals"]["weighted_aliases"] == ["live"]
+    assert result["latest_policy_exposed"] is True
+    assert result["current_configuration"]["environment_variable_keys"] == [
+        "API_URL",
+        "PUBLIC_NAME",
+        "QUEUE_URL",
+        "SECRET_TOKEN",
+        "TOPIC_ARN",
+    ]
+    assert "must-not-leak" not in str(result)
+
+
+def test_get_lambda_event_source_mapping_diagnostics_returns_safe_metadata() -> None:
+    runtime = FakeRuntime()
+
+    result = get_lambda_event_source_mapping_diagnostics(runtime, "dev-api")
+
+    assert result["summary"] == {
+        "mapping_count": 1,
+        "enabled_count": 1,
+        "disabled_count": 0,
+        "source_types": ["sqs"],
+        "warning_count": 0,
+    }
+    mapping = result["mappings"][0]
+    assert mapping["uuid"] == "mapping-1"
+    assert mapping["source_type"] == "sqs"
+    assert mapping["last_processing_result"] == "OK"
+    assert mapping["maximum_batching_window_seconds"] == 5
+    assert mapping["destination_config"]["on_failure_arn"].endswith(":esm-dlq")
+    assert mapping["function_response_types"] == ["ReportBatchItemFailures"]
+    assert mapping["scaling_config"] == {"maximum_concurrency": 3}
+    assert mapping["filter_criteria_configured"] is True
+    assert "must-not-leak" not in str(result)
+    assert result["permission_hints"][0]["actions_to_check"] == [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+    ]
+    assert result["permission_checks"]["enabled"] is True
+    assert result["permission_checks"]["checked_count"] == 3
+    assert {check["mapping_uuid"] for check in result["permission_checks"]["checks"]} == {
+        "mapping-1"
+    }
+    assert runtime.iam_client.simulation_requests[0]["ActionNames"] == ["sqs:ReceiveMessage"]
+
+
+def test_get_lambda_event_source_mapping_diagnostics_can_skip_permission_checks() -> None:
+    result = get_lambda_event_source_mapping_diagnostics(
+        FakeRuntime(),
+        "dev-api",
+        include_permission_checks=False,
+    )
+
+    assert result["permission_checks"]["enabled"] is False
+    assert result["permission_checks"]["checked_count"] == 0
+
+
+def test_get_lambda_event_source_mapping_diagnostics_normalizes_list_errors() -> None:
+    runtime = FakeRuntime()
+    runtime.lambda_client = FailingEventSourceMappingLambdaClient()
+
+    with pytest.raises(AwsToolError, match="AWS lambda.ListEventSourceMappings AccessDenied"):
+        get_lambda_event_source_mapping_diagnostics(runtime, "dev-api")
+
+
 def test_explain_lambda_network_access_reports_non_vpc_runtime() -> None:
     runtime = FakeRuntime()
     runtime.lambda_client = NonVpcLambdaClient()
@@ -429,6 +797,9 @@ def test_explain_lambda_network_access_reports_nat_internet_path() -> None:
 
     assert result["summary"]["network_mode"] == "vpc"
     assert result["summary"]["internet_access"] == "yes"
+    assert result["target_reachability"]["summary"]["status"] == "likely_reachable"
+    assert result["target_reachability"]["environment_url_target_count"] == 2
+    assert result["dns_risks"]["private_dns_target_count"] == 1
     assert result["egress"]["internet"]["via"] == ["nat-1"]
     assert {path["from_subnet"] for path in result["paths"] if path["verdict"] == "reachable"} == {
         "subnet-1",
@@ -485,6 +856,183 @@ def test_explain_lambda_network_access_reports_security_group_block() -> None:
     assert internet_paths[0]["limited_by"] == [
         "no security group egress rule allows tcp/443 to 0.0.0.0/0"
     ]
+
+
+def test_explain_lambda_network_access_classifies_explicit_url_block() -> None:
+    runtime = FakeRuntime()
+    runtime.ec2_client = FakeEc2Client(
+        route_tables=[
+            {
+                "RouteTableId": "rtb-isolated",
+                "Associations": [{"SubnetId": "subnet-1"}, {"SubnetId": "subnet-2"}],
+                "Routes": [{"DestinationCidrBlock": "10.0.0.0/16", "GatewayId": "local"}],
+            }
+        ]
+    )
+
+    result = explain_lambda_network_access(
+        runtime,
+        "dev-api",
+        target_url="https://api.example.com/orders",
+    )
+
+    explicit_target = result["target_reachability"]["explicit_target"]
+    assert explicit_target["target_class"] == "public_internet"
+    assert result["target_reachability"]["summary"] == {
+        "status": "blocked",
+        "blocked_target_count": 2,
+        "unknown_target_count": 0,
+    }
+    assert result["target_reachability"]["evaluated_targets"][0]["reachability"] == {
+        "verdict": "blocked",
+        "reason": "network_summary_blocks_path",
+    }
+    assert result["aws_api_reachability"]["summary"]["status"] == "blocked"
+    assert result["aws_api_reachability"]["checks"][0]["service"] == "sqs"
+
+
+def test_explain_lambda_network_access_reports_private_aws_api_endpoint() -> None:
+    runtime = FakeRuntime()
+    runtime.ec2_client = FakeEc2Client(
+        route_tables=[
+            {
+                "RouteTableId": "rtb-isolated",
+                "Associations": [{"SubnetId": "subnet-1"}, {"SubnetId": "subnet-2"}],
+                "Routes": [{"DestinationCidrBlock": "10.0.0.0/16", "GatewayId": "local"}],
+            }
+        ],
+        endpoints=[
+            {
+                "VpcEndpointId": "vpce-sqs",
+                "VpcEndpointType": "Interface",
+                "ServiceName": "com.amazonaws.eu-west-2.sqs",
+                "State": "available",
+                "PrivateDnsEnabled": True,
+                "PolicyDocument": "{}",
+                "Groups": [{"GroupId": "sg-1"}],
+            }
+        ],
+    )
+
+    result = explain_lambda_network_access(runtime, "dev-api")
+
+    assert result["aws_api_reachability"]["summary"] == {
+        "status": "private_endpoints_ready",
+        "blocked_service_count": 0,
+        "public_route_service_count": 0,
+    }
+    assert result["aws_api_reachability"]["checks"][0] == {
+        "service": "sqs",
+        "status": "private_endpoint_ready",
+        "endpoint_id": "vpce-sqs",
+        "endpoint_type": "Interface",
+        "private_dns_enabled": True,
+        "policy_configured": True,
+        "security_group_count": 1,
+    }
+
+
+def test_explain_lambda_network_access_flags_endpoint_private_dns_risk() -> None:
+    runtime = FakeRuntime()
+    runtime.ec2_client = FakeEc2Client(
+        endpoints=[
+            {
+                "VpcEndpointId": "vpce-sqs",
+                "VpcEndpointType": "Interface",
+                "ServiceName": "com.amazonaws.eu-west-2.sqs",
+                "State": "available",
+                "PrivateDnsEnabled": False,
+                "Groups": [{"GroupId": "sg-1"}],
+            }
+        ],
+    )
+
+    result = explain_lambda_network_access(runtime, "dev-api")
+
+    assert result["dns_risks"]["summary"] == {
+        "status": "risks_detected",
+        "risk_count": 2,
+        "risks": [
+            "private_dns_targets_need_vpc_resolution",
+            "interface_endpoint_private_dns_disabled",
+        ],
+    }
+    assert result["dns_risks"]["endpoint_private_dns_risks"] == [
+        {"service": "sqs", "endpoint_id": "vpce-sqs", "risk": "private_dns_disabled"}
+    ]
+
+
+def test_explain_lambda_network_access_validates_target_url() -> None:
+    with pytest.raises(ToolInputError, match="target_url must be"):
+        explain_lambda_network_access(FakeRuntime(), "dev-api", target_url="ftp://example.com")
+
+
+def test_simulate_lambda_security_group_path_checks_egress_and_ingress() -> None:
+    runtime = FakeRuntime()
+    runtime.ec2_client = FakeEc2Client(
+        security_groups=[
+            {
+                "GroupId": "sg-1",
+                "GroupName": "lambda-egress",
+                "IpPermissionsEgress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 5432,
+                        "ToPort": 5432,
+                        "IpRanges": [{"CidrIp": "10.0.10.0/24"}],
+                    }
+                ],
+            },
+            {
+                "GroupId": "sg-db",
+                "GroupName": "db",
+                "IpPermissions": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 5432,
+                        "ToPort": 5432,
+                        "IpRanges": [{"CidrIp": "10.0.0.0/16"}],
+                    }
+                ],
+            },
+        ]
+    )
+
+    result = simulate_lambda_security_group_path(
+        runtime,
+        "dev-api",
+        target_cidr="10.0.10.12/32",
+        target_port=5432,
+        target_security_group_id="sg-db",
+    )
+
+    assert result["summary"] == {"status": "likely_reachable", "blockers": []}
+    assert result["egress"]["allowed"] is True
+    assert result["ingress"]["allowed"] is True
+    assert result["lambda_network"]["subnet_cidrs"] == ["10.0.1.0/24", "10.0.2.0/24"]
+
+
+def test_simulate_lambda_security_group_path_reports_blockers() -> None:
+    result = simulate_lambda_security_group_path(
+        FakeRuntime(),
+        "dev-api",
+        target_cidr="172.16.10.10/32",
+        target_port=5432,
+    )
+
+    assert result["summary"] == {
+        "status": "blocked",
+        "blockers": ["lambda_security_group_egress"],
+    }
+    assert result["ingress"]["checked"] is False
+
+
+def test_simulate_lambda_security_group_path_validates_inputs() -> None:
+    with pytest.raises(ToolInputError, match="target_cidr must be"):
+        simulate_lambda_security_group_path(FakeRuntime(), "dev-api", "not-cidr", 443)
+
+    with pytest.raises(ToolInputError, match="target_port must be"):
+        simulate_lambda_security_group_path(FakeRuntime(), "dev-api", "10.0.0.0/16", 0)
 
 
 def test_explain_lambda_network_access_reports_mixed_subnet_routes() -> None:
@@ -581,6 +1129,32 @@ def test_investigate_lambda_failure_summarizes_signals_and_next_checks() -> None
     assert result["configuration"]["event_sources"]["count"] == 1
 
 
+def test_investigate_lambda_cold_start_init_reports_config_metrics_and_logs() -> None:
+    result = investigate_lambda_cold_start_init(FakeRuntime(), "dev-api", since_minutes=30)
+
+    assert result["diagnostic_summary"]["status"] == "needs_attention"
+    assert "vpc_attachment_can_increase_cold_start" in result["diagnostic_summary"]["likely_causes"]
+    assert "low_memory_configuration" in result["diagnostic_summary"]["likely_causes"]
+    assert result["signals"]["init_duration_ms_last_hour"] == 900.0
+    assert result["log_signals"]["init_report_count"] == 1
+    assert result["configuration"]["code_size_bytes"] == 12345
+    assert "must-not-leak" not in str(result)
+
+
+def test_investigate_lambda_timeout_root_cause_classifies_dependency_and_batch_risks() -> None:
+    result = investigate_lambda_timeout_root_cause(FakeRuntime(), "dev-api")
+
+    assert result["summary"]["status"] == "timeout_risks_detected"
+    assert result["summary"]["likely_causes"] == [
+        "downstream_dependency_bound",
+        "queue_or_stream_batch_pressure",
+    ]
+    # SECRET_TOKEN hint is filtered (secret-like key); 3 remaining.
+    assert result["signals"]["downstream_dependency_hint_count"] == 3
+    assert result["signals"]["event_source_retry_pressure"] is True
+    assert "must-not-leak" not in str(result)
+
+
 def test_investigate_lambda_failure_reports_no_recent_errors() -> None:
     runtime = FakeRuntime()
     runtime.cloudwatch_client = QuietCloudWatchClient()
@@ -622,6 +1196,9 @@ def test_explain_lambda_dependencies_returns_graph_and_permission_hints() -> Non
         for hint in result["permission_hints"]
     )
     assert any("sqs:SendMessage" in hint["actions_to_check"] for hint in result["permission_hints"])
+    assert any(edge["relationship"] == "may_depend_on" for edge in result["edges"])
+    # SECRET_TOKEN hint is filtered (secret-like key); 3 remaining.
+    assert result["summary"]["environment_dependency_hint_count"] == 3
     assert result["permission_checks"]["enabled"] is True
     checked_actions = {check["action"] for check in result["permission_checks"]["checks"]}
     assert "logs:PutLogEvents" in checked_actions
@@ -736,6 +1313,105 @@ def test_check_lambda_permission_path_validates_inputs() -> None:
         )
 
 
+def test_check_lambda_to_sqs_sendability_reports_likely_sendable_path() -> None:
+    result = check_lambda_to_sqs_sendability(
+        FakeRuntime(),
+        "dev-api",
+        "https://sqs.eu-west-2.amazonaws.com/123456789012/dev-queue",
+    )
+
+    assert result["diagnostic_summary"]["status"] == "likely_sendable"
+    assert result["signals"]["identity_allows_send_message"] is True
+    assert result["signals"]["queue_policy_allows_role"] is True
+    assert result["signals"]["region_matches"] is True
+    assert result["signals"]["account_matches"] is True
+    assert result["queue"]["policy"] == {"available": True, "statement_count": 1}
+    assert result["identity_permission_check"]["action"] == "sqs:SendMessage"
+
+
+def test_check_lambda_to_sqs_sendability_reports_identity_denial() -> None:
+    runtime = FakeRuntime()
+    runtime.iam_client.simulation_decision = "implicitDeny"
+
+    result = check_lambda_to_sqs_sendability(
+        runtime,
+        "dev-api",
+        "https://sqs.eu-west-2.amazonaws.com/123456789012/dev-queue",
+    )
+
+    assert result["diagnostic_summary"]["status"] == "blocked"
+    assert "identity_policy_denies_send_message" in result["diagnostic_summary"]["blockers"]
+    assert result["signals"]["identity_allows_send_message"] is False
+
+
+def test_check_lambda_to_sqs_sendability_validates_queue_url() -> None:
+    with pytest.raises(ToolInputError, match="queue_url must start"):
+        check_lambda_to_sqs_sendability(FakeRuntime(), "dev-api", "dev-queue")
+
+
+def test_prove_lambda_invocation_path_reports_likely_invokable_service_path() -> None:
+    result = prove_lambda_invocation_path(
+        FakeRuntime(),
+        "dev-api",
+        "apigateway.amazonaws.com",
+        source_arn="arn:aws:execute-api:eu-west-2:123456789012:api-id/*/GET/dev",
+    )
+
+    assert result["proof_summary"] == {
+        "status": "likely_invokable",
+        "first_blocked_edge": None,
+        "blocked_edges": [],
+        "unknown_edges": [],
+    }
+    resource_edge = next(
+        edge for edge in result["edges"] if edge["name"] == "lambda_resource_policy"
+    )
+    assert resource_edge["reason"] == "lambda_resource_policy_allows_invoke"
+    assert resource_edge["condition_keys"] == ["ArnLike"]
+    assert "Statement" not in str(result)
+
+
+def test_prove_lambda_invocation_path_reports_first_blocked_edge() -> None:
+    result = prove_lambda_invocation_path(
+        FakeRuntime(),
+        "dev-api",
+        "apigateway.amazonaws.com",
+        source_arn="arn:aws:execute-api:us-east-1:123456789012:api-id/*/GET/dev",
+    )
+
+    assert result["proof_summary"]["status"] == "blocked"
+    assert result["proof_summary"]["first_blocked_edge"] == "region_account"
+    assert "region_account" in result["proof_summary"]["blocked_edges"]
+
+
+def test_prove_lambda_invocation_path_validates_caller_principal() -> None:
+    with pytest.raises(ToolInputError, match="caller_principal"):
+        prove_lambda_invocation_path(FakeRuntime(), "dev-api", "api-gateway")
+
+
+def test_analyze_cross_account_lambda_invocation_flags_account_drift() -> None:
+    result = analyze_cross_account_lambda_invocation(
+        FakeRuntime(),
+        "dev-api",
+        "arn:aws:iam::999999999999:role/caller",
+        source_arn="arn:aws:sqs:eu-west-2:999999999999:queue",
+    )
+
+    assert result["cross_account"] == {
+        "is_cross_account": True,
+        "function_account": "123456789012",
+        "caller_account": "999999999999",
+        "source_account": "999999999999",
+        "finding_count": 4,
+        "findings": [
+            "cross_account_path",
+            "caller_account_differs_from_lambda",
+            "source_account_differs_from_lambda",
+            "invocation_proof_blocked",
+        ],
+    }
+
+
 class QuietCloudWatchClient:
     def get_metric_data(self, **_: Any) -> dict[str, Any]:
         return {"MetricDataResults": []}
@@ -779,6 +1455,48 @@ class FailingConfigurationLambdaClient(FakeLambdaClient):
                 }
             },
             "GetFunctionConfiguration",
+        )
+
+
+class MissingAsyncDestinationLambdaClient(FakeLambdaClient):
+    def get_function_event_invoke_config(self, **_: Any) -> dict[str, Any]:
+        return {
+            "MaximumRetryAttempts": 2,
+            "MaximumEventAgeInSeconds": 21600,
+            "DestinationConfig": {},
+        }
+
+
+class FailingAliasVersionLambdaClient(FakeLambdaClient):
+    def list_aliases(self, **_: Any) -> dict[str, Any]:
+        raise ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "aliases denied"}},
+            "ListAliases",
+        )
+
+    def list_versions_by_function(self, **_: Any) -> dict[str, Any]:
+        raise ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "versions denied"}},
+            "ListVersionsByFunction",
+        )
+
+    def get_policy(self, **_: Any) -> dict[str, Any]:
+        raise ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "policy denied"}},
+            "GetPolicy",
+        )
+
+
+class FailingEventSourceMappingLambdaClient(FakeLambdaClient):
+    def list_event_source_mappings(self, **_: Any) -> dict[str, Any]:
+        raise ClientError(
+            {
+                "Error": {
+                    "Code": "AccessDenied",
+                    "Message": "event source denied token=must-not-leak",
+                }
+            },
+            "ListEventSourceMappings",
         )
 
 

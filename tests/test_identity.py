@@ -7,7 +7,7 @@ from botocore.exceptions import ClientError, NoCredentialsError, ProfileNotFound
 
 from aws_safe_mcp.auth import AwsAuthError, AwsIdentity, AwsRuntime
 from aws_safe_mcp.config import AwsSafeConfig
-from aws_safe_mcp.tools.identity import aws_auth_status, aws_identity
+from aws_safe_mcp.tools.identity import get_aws_auth_status, get_aws_identity
 
 
 class FakeStsClient:
@@ -27,6 +27,30 @@ class FakeSession:
     def client(self, service_name: str, **_: Any) -> FakeStsClient:
         assert service_name == "sts"
         return FakeStsClient()
+
+
+class RecordingClient:
+    def __init__(self, service_name: str) -> None:
+        self.service_name = service_name
+
+    def get_caller_identity(self) -> dict[str, str]:
+        return {
+            "Account": "123456789012",
+            "Arn": "arn:aws:sts::123456789012:assumed-role/dev-role/session",
+            "UserId": "AROATEST:session",
+        }
+
+
+class RecordingSession:
+    client_calls: list[dict[str, Any]] = []
+
+    def __init__(self, profile_name: str | None = None, region_name: str | None = None) -> None:
+        self.profile_name = profile_name
+        self.region_name = region_name
+
+    def client(self, service_name: str, **kwargs: Any) -> RecordingClient:
+        type(self).client_calls.append({"service_name": service_name, **kwargs})
+        return RecordingClient(service_name)
 
 
 class CountingSession:
@@ -70,7 +94,7 @@ class StaticRuntime:
         return self.identity
 
 
-def test_aws_identity_reports_validated_session(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_aws_identity_reports_validated_session(monkeypatch: pytest.MonkeyPatch) -> None:
     import aws_safe_mcp.auth as auth
 
     monkeypatch.setattr(auth.boto3, "Session", FakeSession)
@@ -82,7 +106,7 @@ def test_aws_identity_reports_validated_session(monkeypatch: pytest.MonkeyPatch)
         region="eu-west-2",
     )
 
-    assert aws_identity(runtime) == {
+    assert get_aws_identity(runtime) == {
         "account": "123456789012",
         "arn": "arn:aws:sts::123456789012:assumed-role/dev-role/session",
         "user_id": "AROATEST:session",
@@ -92,7 +116,56 @@ def test_aws_identity_reports_validated_session(monkeypatch: pytest.MonkeyPatch)
     }
 
 
-def test_aws_auth_status_reports_active_role(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_uses_configured_global_endpoint_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aws_safe_mcp.auth as auth
+
+    RecordingSession.client_calls = []
+    monkeypatch.setattr(auth.boto3, "Session", RecordingSession)
+    runtime = AwsRuntime(
+        config=AwsSafeConfig(
+            allowed_account_ids=["123456789012"],
+            endpoint_url="http://127.0.0.1:4566",
+        ),
+        profile=None,
+        region="eu-west-2",
+    )
+
+    runtime.client("s3")
+
+    assert [call["service_name"] for call in RecordingSession.client_calls] == ["sts", "sts", "s3"]
+    assert [call["endpoint_url"] for call in RecordingSession.client_calls] == [
+        "http://127.0.0.1:4566",
+        "http://127.0.0.1:4566",
+        "http://127.0.0.1:4566",
+    ]
+
+
+def test_runtime_uses_service_endpoint_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aws_safe_mcp.auth as auth
+
+    RecordingSession.client_calls = []
+    monkeypatch.setattr(auth.boto3, "Session", RecordingSession)
+    runtime = AwsRuntime(
+        config=AwsSafeConfig(
+            allowed_account_ids=["123456789012"],
+            endpoint_url="http://127.0.0.1:4566",
+            service_endpoint_urls={"s3": "http://127.0.0.1:4572"},
+        ),
+        profile=None,
+        region="eu-west-2",
+    )
+
+    runtime.client("s3")
+
+    assert RecordingSession.client_calls[-1]["service_name"] == "s3"
+    assert RecordingSession.client_calls[-1]["endpoint_url"] == "http://127.0.0.1:4572"
+
+
+def test_get_aws_auth_status_reports_active_role(monkeypatch: pytest.MonkeyPatch) -> None:
     import aws_safe_mcp.auth as auth
 
     monkeypatch.setattr(auth.boto3, "Session", FakeSession)
@@ -102,7 +175,7 @@ def test_aws_auth_status_reports_active_role(monkeypatch: pytest.MonkeyPatch) ->
         region="eu-west-2",
     )
 
-    assert aws_auth_status(runtime) == {
+    assert get_aws_auth_status(runtime) == {
         "authenticated": True,
         "account": "123456789012",
         "arn": "arn:aws:sts::123456789012:assumed-role/dev-role/session",
@@ -145,13 +218,13 @@ def test_aws_auth_status_reports_active_role(monkeypatch: pytest.MonkeyPatch) ->
         ),
     ],
 )
-def test_aws_auth_status_reports_principal_shapes(
+def test_get_aws_auth_status_reports_principal_shapes(
     arn: str,
     principal_type: str,
     principal_name: str,
     session_name: str | None,
 ) -> None:
-    result = aws_auth_status(StaticRuntime(arn))
+    result = get_aws_auth_status(StaticRuntime(arn))
 
     assert result["principal_type"] == principal_type
     assert result["principal_name"] == principal_name
@@ -207,7 +280,7 @@ def test_runtime_records_missing_profile_without_failing_startup(
     assert runtime.identity is None
     assert runtime.auth_error is not None
     assert "was not found" in runtime.auth_error
-    assert aws_auth_status(runtime)["authenticated"] is False
+    assert get_aws_auth_status(runtime)["authenticated"] is False
     with pytest.raises(AwsAuthError, match="aws login --profile missing"):
         runtime.client("s3")
     with pytest.raises(AwsAuthError, match="aws sso login --profile missing"):
@@ -231,11 +304,11 @@ def test_runtime_records_missing_credentials_without_failing_startup(
     assert runtime.identity is None
     expected = "No AWS credentials were found for the selected profile/environment"
     assert runtime.auth_error == expected
-    status = aws_auth_status(runtime)
+    status = get_aws_auth_status(runtime)
     assert status["authenticated"] is False
     assert status["message"] == expected
     with pytest.raises(AwsAuthError, match="No AWS credentials"):
-        aws_identity(runtime)
+        get_aws_identity(runtime)
 
 
 def test_runtime_records_sts_client_error_without_failing_startup(
@@ -255,7 +328,7 @@ def test_runtime_records_sts_client_error_without_failing_startup(
     assert runtime.identity is None
     assert runtime.auth_error is not None
     assert "Unable to validate AWS identity" in runtime.auth_error
-    assert aws_auth_status(runtime)["authenticated"] is False
+    assert get_aws_auth_status(runtime)["authenticated"] is False
 
 
 def test_runtime_records_wrong_account_without_failing_startup(
@@ -275,7 +348,7 @@ def test_runtime_records_wrong_account_without_failing_startup(
     assert runtime.identity is None
     assert runtime.auth_error is not None
     assert "not allowed" in runtime.auth_error
-    assert aws_auth_status(runtime)["authenticated"] is False
+    assert get_aws_auth_status(runtime)["authenticated"] is False
 
 
 def test_runtime_detects_login_after_startup(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -289,11 +362,11 @@ def test_runtime_detects_login_after_startup(monkeypatch: pytest.MonkeyPatch) ->
         region="eu-west-2",
     )
 
-    assert aws_auth_status(runtime)["authenticated"] is False
+    assert get_aws_auth_status(runtime)["authenticated"] is False
 
     ErrorSession.sts_client = FakeStsClient()
 
-    assert aws_auth_status(runtime)["authenticated"] is True
+    assert get_aws_auth_status(runtime)["authenticated"] is True
     assert runtime.require_identity() == AwsIdentity(
         account="123456789012",
         arn="arn:aws:sts::123456789012:assumed-role/dev-role/session",

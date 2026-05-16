@@ -3,6 +3,16 @@
 See [AI client notes](ai-clients.md) for provider-neutral live smoke prompts and
 expected behavior across MCP clients.
 
+## Config file path
+
+Claude Desktop reads MCP server entries from a per-OS JSON file:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+The file may need to be created if it does not exist.
+
 Add an MCP server entry like this:
 
 ```json
@@ -27,14 +37,8 @@ Add an MCP server entry like this:
 }
 ```
 
-Restart Claude Desktop after changing the config. If `aws_auth_status` reports
-`authenticated: false`, run the login command for your AWS profile:
+Restart Claude Desktop after editing this file (Claude Desktop reads MCP servers
+only at startup).
 
-```bash
-aws login --profile dev
-# or:
-aws sso login --profile dev
-```
-
-The MCP server re-checks STS on the next tool call, so a full app restart is not
-normally needed after login.
+See [authentication.md](authentication.md) for the auth flow and
+[troubleshooting.md](troubleshooting.md) for common errors.

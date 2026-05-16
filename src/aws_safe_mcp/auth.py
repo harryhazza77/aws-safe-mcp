@@ -69,6 +69,7 @@ class AwsRuntime:
             service_name,
             region_name=region or self.region,
             config=self._boto_config,
+            endpoint_url=self.config.endpoint_for_service(service_name),
         )
 
     def require_identity(self) -> AwsIdentity:
@@ -112,6 +113,7 @@ class AwsRuntime:
                 "sts",
                 region_name=self.region,
                 config=self._boto_config,
+                endpoint_url=self.config.endpoint_for_service("sts"),
             ).get_caller_identity()
         except NoCredentialsError as exc:
             message = "No AWS credentials were found for the selected profile/environment"

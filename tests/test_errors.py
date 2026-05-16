@@ -35,7 +35,7 @@ def test_normalize_aws_error_includes_operation_context() -> None:
     assert str(error) == "AWS lambda.ListFunctions AccessDenied: denied"
 
 
-def test_normalize_aws_error_redacts_and_truncates_message() -> None:
+def test_normalize_aws_error_redacts_keyword_pairs_and_long_tokens() -> None:
     error = normalize_aws_error(
         ClientError(
             {
@@ -52,6 +52,27 @@ def test_normalize_aws_error_redacts_and_truncates_message() -> None:
     rendered = str(error)
     assert "abc123" not in rendered
     assert "supersecret" not in rendered
+    assert "x" * 600 not in rendered
     assert "token=[REDACTED]" in rendered
     assert "password:[REDACTED]" in rendered
+    assert "[REDACTED]" in rendered
+
+
+def test_normalize_aws_error_truncates_messages_that_remain_long_after_redaction() -> None:
+    # 600 spaces (whitespace is excluded from the opaque-token regex) so the
+    # message stays long after redaction and the truncation envelope kicks in.
+    error = normalize_aws_error(
+        ClientError(
+            {
+                "Error": {
+                    "Code": "ValidationException",
+                    "Message": "bad request " + ("a b " * 200),
+                }
+            },
+            "SomeOperation",
+        ),
+        "service.Operation",
+    )
+
+    rendered = str(error)
     assert "[TRUNCATED]" in rendered

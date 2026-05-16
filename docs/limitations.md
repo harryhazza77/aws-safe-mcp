@@ -34,6 +34,9 @@ boundaries, service control policies, resource policies, tags, request context,
 and runtime values. When the answer matters operationally, verify with AWS IAM
 tools, CloudTrail, and the target service.
 
+For the per-tool list of AWS read actions a caller must hold (and which ones
+are optional), see [iam-per-tool.md](iam-per-tool.md).
+
 ## Visibility Follows The Active Credentials
 
 The server does not maintain its own resource allowlist beyond the mandatory AWS

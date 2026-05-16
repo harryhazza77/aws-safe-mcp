@@ -26,6 +26,23 @@ def test_load_config_accepts_minimal_safe_yaml(tmp_path: Path) -> None:
     assert config.require_account_allowed("123456789012") == "123456789012"
 
 
+def test_load_config_accepts_endpoint_urls(tmp_path: Path) -> None:
+    config = load_config(
+        write_config(
+            tmp_path / "config.yaml",
+            """
+endpoint_url: http://127.0.0.1:4566
+service_endpoint_urls:
+  sts: http://127.0.0.1:4566
+  s3: http://127.0.0.1:4572
+""",
+        )
+    )
+
+    assert config.endpoint_for_service("lambda") == "http://127.0.0.1:4566"
+    assert config.endpoint_for_service("s3") == "http://127.0.0.1:4572"
+
+
 def test_load_config_fails_closed_when_missing(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="does not exist"):
         load_config(tmp_path / "missing.yaml")
@@ -44,4 +61,16 @@ def test_load_config_rejects_bad_account_id(tmp_path: Path) -> None:
     path.write_text(path.read_text(encoding="utf-8").replace('"123456789012"', '"abc"'))
 
     with pytest.raises(ConfigError, match="expected 12 digits"):
+        load_config(path)
+
+
+def test_load_config_rejects_non_http_endpoint(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path / "config.yaml",
+        """
+endpoint_url: 127.0.0.1:4566
+""",
+    )
+
+    with pytest.raises(ConfigError, match="endpoint_url must start"):
         load_config(path)

@@ -22,6 +22,55 @@ def clamp_limit(value: int | None, default: int, configured_max: int, label: str
     return min(value, configured_max)
 
 
+# Per-API maximum page sizes published by AWS. Centralized to prevent
+# call-site drift; pass the boto3 operation as `service.OperationName`.
+# Values are conservative — if AWS raises the cap, lift here.
+SERVICE_MAX_PAGE_SIZE: dict[str, int] = {
+    "apigateway.GetRestApis": 500,
+    "cloudwatch.DescribeAlarms": 100,
+    "cloudwatch.FilterLogEvents": 10_000,
+    "dynamodb.ListTables": 100,
+    "dynamodb.DescribeStream": 100,
+    "ec2.DescribeRouteTables": 100,
+    "ec2.DescribeSecurityGroups": 1000,
+    "ec2.DescribeSubnets": 1000,
+    "ec2.DescribeVpcEndpoints": 100,
+    "ecs.ListClusters": 100,
+    "ecs.ListServices": 100,
+    "eventbridge.ListEventBuses": 100,
+    "eventbridge.ListRules": 100,
+    "eventbridge.ListTargetsByRule": 100,
+    "iam.ListAttachedRolePolicies": 100,
+    "iam.ListRolePolicies": 100,
+    "kms.ListKeys": 1000,
+    "lambda.ListAliases": 100,
+    "lambda.ListEventSourceMappings": 100,
+    "lambda.ListFunctions": 50,
+    "lambda.ListVersionsByFunction": 100,
+    "logs.DescribeLogGroups": 50,
+    "s3.ListBuckets": 1000,
+    "sns.ListSubscriptions": 100,
+    "sns.ListTopics": 1000,
+    "sqs.ListQueues": 1000,
+    "stepfunctions.ListExecutions": 1000,
+    "stepfunctions.ListStateMachines": 1000,
+    "tagging.GetResources": 100,
+}
+
+
+def page_size(operation: str, limit: int) -> int:
+    """Return a per-operation page size capped at the AWS-published max.
+
+    Use the form ``service.OperationName`` (e.g., ``lambda.ListFunctions``).
+    Unknown operations fall back to ``limit`` unchanged — register the cap
+    in ``SERVICE_MAX_PAGE_SIZE`` to enforce a lower ceiling consistently.
+    """
+    cap = SERVICE_MAX_PAGE_SIZE.get(operation)
+    if cap is None:
+        return limit
+    return min(limit, cap)
+
+
 def clamp_since_minutes(value: int | None, default: int, configured_max: int) -> int:
     if value is None:
         return min(default, configured_max)

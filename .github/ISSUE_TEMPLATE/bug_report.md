@@ -14,7 +14,7 @@ assignees: ""
 
 ## Tool or command
 
-For example: `aws_auth_status`, `explain_lambda_dependencies`, or the CLI
+For example: `get_aws_auth_status`, `explain_lambda_dependencies`, or the CLI
 command you ran.
 
 ## Environment

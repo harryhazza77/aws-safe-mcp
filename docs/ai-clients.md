@@ -36,8 +36,9 @@ uv --directory /path/to/aws-sdk-mcp run aws-safe-mcp \
 
 ## Client Behavior To Expect
 
-- The server can start before AWS credentials are valid.
-- `aws_auth_status` should be the first tool call in a new client session.
+- Start each session by asking the AI to run `get_aws_auth_status` — it
+  confirms your principal is in the allowed account and surfaces a friendly
+  auth-failure message otherwise.
 - After `aws login` or `aws sso login`, the next AWS tool call re-checks STS.
 - Some clients need a reconnect/reload after server code or dependency changes.
 - The server writes audit logs to stderr; clients may show these in their MCP
@@ -45,43 +46,9 @@ uv --directory /path/to/aws-sdk-mcp run aws-safe-mcp \
 
 ## Provider-Neutral Live Smoke Prompts
 
-Use a non-production AWS profile and account. Keep result limits small.
-
-```text
-Check my AWS auth status. Use AWS MCP only.
-```
-
-```text
-Search AWS resources for <name-fragment>. Use AWS MCP only.
-```
-
-```text
-List Lambda functions, Step Functions, API Gateways, EventBridge rules, S3 buckets, DynamoDB tables, and CloudWatch log groups with small result limits. Use AWS MCP only.
-```
-
-```text
-Explain the dependencies for Lambda <function-name>. Use AWS MCP only.
-```
-
-```text
-Explain the dependencies for Step Function arn:aws:states:<region>:<account>:stateMachine:<name>. Use AWS MCP only.
-```
-
-```text
-Explain the dependencies for API Gateway <api-id>. Use AWS MCP only.
-```
-
-```text
-Explain the dependencies for EventBridge rule <rule-name>. Use AWS MCP only.
-```
-
-```text
-Investigate delivery for EventBridge rule <rule-name> over the last hour. Use AWS MCP only.
-```
-
-```text
-Trace the event-driven flow for source aws.s3, detail type Object Created, bucket <bucket-name>, and <suffix> object keys. Use AWS MCP only.
-```
+Copy-paste prompts grouped by symptom now live in [docs/prompts.md](prompts.md).
+The first-session checks (`get_aws_auth_status`, `get_aws_identity`,
+`list_lambda_functions`) are also in [docs/quickstart.md](quickstart.md).
 
 ## Good Live Smoke Signals
 
@@ -117,3 +84,10 @@ Trace the event-driven flow for source aws.s3, detail type Object Created, bucke
   not crash the whole tool.
 - Non-Lambda API Gateway integrations should show dependency edges with no
   Lambda permission checks.
+
+## See also
+
+- [quickstart.md](quickstart.md)
+- [authentication.md](authentication.md)
+- [troubleshooting.md](troubleshooting.md)
+- [prompts.md](prompts.md)
