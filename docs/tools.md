@@ -298,6 +298,21 @@ Inputs:
 - `region` optional
 - `max_subscriptions` optional
 
+### `explain_sns_topic_dependencies`
+
+Maps one SNS topic into the shared dependency graph shape. It summarizes
+subscriptions, downstream Lambda/SQS/HTTP targets, subscription DLQs where
+visible, and likely delivery permission needs. It checks Lambda resource
+policies and SQS queue policies where those metadata APIs are readable. It does
+not publish messages.
+
+Inputs:
+
+- `topic_arn` required
+- `region` optional
+- `include_permission_checks` optional, default `true`
+- `max_permission_checks` optional
+
 ## CloudWatch Logs
 
 ### `list_cloudwatch_log_groups`

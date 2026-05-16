@@ -9,6 +9,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from aws_safe_mcp.auth import AwsRuntime
 from aws_safe_mcp.errors import ToolInputError, normalize_aws_error
 from aws_safe_mcp.tools.common import clamp_limit, resolve_region
+from aws_safe_mcp.tools.graph import dependency_graph_summary, empty_permission_checks
 
 
 def list_sns_topics(
@@ -103,6 +104,75 @@ def get_sns_topic_summary(
             "available": bool(attributes.get("DeliveryPolicy")),
         },
         "policy": _policy_summary(attributes.get("Policy")),
+    }
+
+
+def explain_sns_topic_dependencies(
+    runtime: AwsRuntime,
+    topic_arn: str,
+    region: str | None = None,
+    include_permission_checks: bool = True,
+    max_permission_checks: int | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_arn = require_sns_topic_arn(topic_arn)
+    limit = clamp_limit(
+        max_permission_checks,
+        default=20,
+        configured_max=runtime.config.max_results,
+        label="max_permission_checks",
+    )
+    warnings: list[str] = []
+    topic = get_sns_topic_summary(
+        runtime,
+        required_arn,
+        region=resolved_region,
+        max_subscriptions=limit,
+    )
+    subscriptions = _subscription_dependency_nodes(runtime, resolved_region, topic, warnings)
+    nodes = {
+        "topic": topic,
+        "subscriptions": subscriptions,
+        "lambda_targets": [
+            item for item in subscriptions if item.get("protocol") == "lambda"
+        ],
+        "sqs_targets": [item for item in subscriptions if item.get("protocol") == "sqs"],
+        "dead_letter_targets": [
+            item["dead_letter"]
+            for item in subscriptions
+            if isinstance(item.get("dead_letter"), dict) and item["dead_letter"].get("arn")
+        ],
+    }
+    edges = _sns_dependency_edges(required_arn, subscriptions)
+    permission_hints = _sns_permission_hints(required_arn, subscriptions)
+    permission_checks = (
+        _sns_permission_checks(
+            runtime,
+            resolved_region,
+            required_arn,
+            subscriptions,
+            limit,
+            warnings,
+        )
+        if include_permission_checks
+        else empty_permission_checks()
+    )
+
+    return {
+        "topic_arn": required_arn,
+        "topic_name": topic["topic_name"],
+        "region": resolved_region,
+        "nodes": nodes,
+        "edges": edges,
+        "permission_hints": permission_hints,
+        "permission_checks": permission_checks,
+        "warnings": warnings,
+        "graph_summary": dependency_graph_summary(
+            nodes=nodes,
+            edges=edges,
+            permission_checks=permission_checks,
+            warnings=warnings,
+        ),
     }
 
 
@@ -217,3 +287,311 @@ def _optional_int(value: Any) -> int | None:
         return int(str(value))
     except ValueError:
         return None
+
+
+def _subscription_dependency_nodes(
+    runtime: AwsRuntime,
+    region: str,
+    topic: dict[str, Any],
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    client = runtime.client("sns", region=region)
+    nodes = []
+    for subscription in topic.get("subscriptions", []):
+        node = dict(subscription)
+        node["dead_letter"] = _subscription_dead_letter(client, subscription, warnings)
+        nodes.append(node)
+    return nodes
+
+
+def _subscription_dead_letter(
+    client: Any,
+    subscription: dict[str, Any],
+    warnings: list[str],
+) -> dict[str, Any] | None:
+    subscription_arn = subscription.get("subscription_arn")
+    if not subscription_arn or subscription_arn == "PendingConfirmation":
+        return None
+    try:
+        response = client.get_subscription_attributes(SubscriptionArn=subscription_arn)
+    except (BotoCoreError, ClientError) as exc:
+        warning = normalize_aws_error(exc, "sns.GetSubscriptionAttributes")
+        warnings.append(f"Unable to read SNS subscription attributes: {warning}")
+        return None
+    raw_policy = response.get("Attributes", {}).get("RedrivePolicy")
+    if not raw_policy:
+        return None
+    try:
+        policy = json.loads(str(raw_policy))
+    except json.JSONDecodeError:
+        warnings.append("SNS subscription RedrivePolicy was not valid JSON")
+        return {"configured": True, "arn": None}
+    target_arn = policy.get("deadLetterTargetArn")
+    return {
+        "configured": True,
+        "arn": target_arn,
+        "name": target_arn.rsplit(":", 1)[-1] if isinstance(target_arn, str) else None,
+    }
+
+
+def _sns_dependency_edges(
+    topic_arn: str,
+    subscriptions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    edges = []
+    for subscription in subscriptions:
+        endpoint = subscription.get("endpoint") or {}
+        target = endpoint.get("arn") or endpoint.get("host")
+        protocol = subscription.get("protocol")
+        if target:
+            edges.append(
+                {
+                    "source": topic_arn,
+                    "target": target,
+                    "relationship": "publishes_to",
+                    "target_type": protocol,
+                }
+            )
+        dead_letter = subscription.get("dead_letter")
+        if isinstance(dead_letter, dict) and dead_letter.get("arn"):
+            edges.append(
+                {
+                    "source": subscription.get("subscription_arn"),
+                    "target": dead_letter["arn"],
+                    "relationship": "dead_letters_to",
+                    "target_type": "sqs",
+                }
+            )
+    return edges
+
+
+def _sns_permission_hints(
+    topic_arn: str,
+    subscriptions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    hints = []
+    for subscription in subscriptions:
+        endpoint = subscription.get("endpoint") or {}
+        protocol = subscription.get("protocol")
+        if protocol == "lambda" and endpoint.get("arn"):
+            hints.append(
+                {
+                    "principal": "sns.amazonaws.com",
+                    "action": "lambda:InvokeFunction",
+                    "resource": endpoint["arn"],
+                    "source": topic_arn,
+                    "reason": "SNS needs Lambda resource-policy permission to invoke the function.",
+                }
+            )
+        if protocol == "sqs" and endpoint.get("arn"):
+            hints.append(
+                {
+                    "principal": "sns.amazonaws.com",
+                    "action": "sqs:SendMessage",
+                    "resource": endpoint["arn"],
+                    "source": topic_arn,
+                    "reason": (
+                        "SNS needs the SQS queue policy to allow SendMessage from this topic."
+                    ),
+                }
+            )
+    return hints
+
+
+def _sns_permission_checks(
+    runtime: AwsRuntime,
+    region: str,
+    topic_arn: str,
+    subscriptions: list[dict[str, Any]],
+    limit: int,
+    warnings: list[str],
+) -> dict[str, Any]:
+    checks: list[dict[str, Any]] = []
+    for subscription in subscriptions:
+        if len(checks) >= limit:
+            break
+        endpoint = subscription.get("endpoint") or {}
+        protocol = subscription.get("protocol")
+        if protocol == "lambda" and endpoint.get("arn"):
+            checks.append(
+                _lambda_policy_check(runtime, region, topic_arn, endpoint["arn"], warnings)
+            )
+        elif protocol == "sqs" and endpoint.get("arn"):
+            checks.append(_sqs_policy_check(runtime, region, topic_arn, endpoint["arn"], warnings))
+    return {
+        "enabled": True,
+        "checked_count": len(checks),
+        "checks": checks,
+        "summary": _permission_summary(checks),
+    }
+
+
+def _lambda_policy_check(
+    runtime: AwsRuntime,
+    region: str,
+    topic_arn: str,
+    function_arn: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    base = {
+        "principal": "sns.amazonaws.com",
+        "action": "lambda:InvokeFunction",
+        "resource": function_arn,
+        "source": topic_arn,
+        "source_type": "lambda_resource_policy",
+    }
+    client = runtime.client("lambda", region=region)
+    try:
+        response = client.get_policy(FunctionName=function_arn)
+    except (BotoCoreError, ClientError) as exc:
+        warning = normalize_aws_error(exc, "lambda.GetPolicy")
+        warnings.append(f"Unable to read Lambda policy for SNS subscription: {warning}")
+        return {**base, "decision": "unknown"}
+    policy = _json_policy(response.get("Policy"))
+    return {
+        **base,
+        "decision": _resource_policy_decision(
+            policy,
+            "sns.amazonaws.com",
+            "lambda:InvokeFunction",
+            function_arn,
+            topic_arn,
+        ),
+    }
+
+
+def _sqs_policy_check(
+    runtime: AwsRuntime,
+    region: str,
+    topic_arn: str,
+    queue_arn: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    base = {
+        "principal": "sns.amazonaws.com",
+        "action": "sqs:SendMessage",
+        "resource": queue_arn,
+        "source": topic_arn,
+        "source_type": "sqs_queue_policy",
+    }
+    queue_url = _queue_url_from_arn(queue_arn)
+    if queue_url is None:
+        return {**base, "decision": "unknown"}
+    client = runtime.client("sqs", region=region)
+    try:
+        response = client.get_queue_attributes(QueueUrl=queue_url, AttributeNames=["Policy"])
+    except (BotoCoreError, ClientError) as exc:
+        warning = normalize_aws_error(exc, "sqs.GetQueueAttributes")
+        warnings.append(f"Unable to read SQS queue policy for SNS subscription: {warning}")
+        return {**base, "decision": "unknown"}
+    policy = _json_policy(response.get("Attributes", {}).get("Policy"))
+    return {
+        **base,
+        "decision": _resource_policy_decision(
+            policy,
+            "sns.amazonaws.com",
+            "sqs:SendMessage",
+            queue_arn,
+            topic_arn,
+        ),
+    }
+
+
+def _json_policy(value: Any) -> dict[str, Any] | None:
+    if not value:
+        return None
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _resource_policy_decision(
+    policy: dict[str, Any] | None,
+    service: str,
+    action: str,
+    resource: str,
+    source_arn: str,
+) -> str:
+    if policy is None:
+        return "unknown"
+    statements = policy.get("Statement", [])
+    if isinstance(statements, dict):
+        statements = [statements]
+    for statement in statements if isinstance(statements, list) else []:
+        if not isinstance(statement, dict) or statement.get("Effect") != "Allow":
+            continue
+        if not _principal_matches(statement.get("Principal"), service):
+            continue
+        if not _action_matches(statement.get("Action"), action):
+            continue
+        if not _resource_matches(statement.get("Resource"), resource):
+            continue
+        if not _source_matches(statement.get("Condition"), source_arn):
+            continue
+        return "allowed"
+    return "unknown"
+
+
+def _principal_matches(principal: Any, service: str) -> bool:
+    if principal == "*":
+        return True
+    if not isinstance(principal, dict):
+        return False
+    service_principal = principal.get("Service")
+    if isinstance(service_principal, str):
+        return service_principal == service
+    if isinstance(service_principal, list):
+        return service in service_principal
+    return False
+
+
+def _action_matches(actions: Any, action: str) -> bool:
+    if isinstance(actions, str):
+        return actions in {action, "*"} or actions.endswith(":*")
+    if isinstance(actions, list):
+        return any(_action_matches(item, action) for item in actions)
+    return False
+
+
+def _resource_matches(resources: Any, resource: str) -> bool:
+    if resources in {None, "*"}:
+        return True
+    if isinstance(resources, str):
+        return resources == resource
+    if isinstance(resources, list):
+        return resource in resources or "*" in resources
+    return False
+
+
+def _source_matches(condition: Any, source_arn: str) -> bool:
+    if not isinstance(condition, dict):
+        return True
+    for operator in ("ArnEquals", "ArnLike", "StringEquals"):
+        values = condition.get(operator)
+        if isinstance(values, dict):
+            source = values.get("AWS:SourceArn") or values.get("aws:SourceArn")
+            if source is None:
+                continue
+            if source == source_arn or source == "*":
+                return True
+            return isinstance(source, list) and source_arn in source
+    return True
+
+
+def _permission_summary(checks: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "allowed": sum(1 for check in checks if check["decision"] == "allowed"),
+        "denied": sum(1 for check in checks if check["decision"] == "denied"),
+        "unknown": sum(1 for check in checks if check["decision"] == "unknown"),
+        "explicit_denies": sum(1 for check in checks if check["decision"] == "explicit_deny"),
+    }
+
+
+def _queue_url_from_arn(queue_arn: str) -> str | None:
+    parts = queue_arn.split(":")
+    if len(parts) < 6 or parts[2] != "sqs":
+        return None
+    _, _, _, region, account, queue_name = parts[:6]
+    return f"https://sqs.{region}.amazonaws.com/{account}/{queue_name}"

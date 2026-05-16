@@ -113,6 +113,9 @@ Related tools:
 - List SNS topics and summarize topic metadata without publishing messages.
 - Inspect SNS display name, encryption shape, delivery-policy presence, topic
   policy statement count, and bounded safe subscription endpoint summaries.
+- Explain SNS topic dependencies, including subscriptions, downstream
+  Lambda/SQS/HTTP targets, subscription DLQs where visible, and inferred
+  delivery permission checks.
 
 Related tools:
 
@@ -126,6 +129,7 @@ Related tools:
 - `explain_sqs_queue_dependencies`
 - `list_sns_topics`
 - `get_sns_topic_summary`
+- `explain_sns_topic_dependencies`
 
 ## Logs And Failure Signals
 

@@ -56,6 +56,9 @@ from aws_safe_mcp.tools.resource_search import search_aws_resources as search_aw
 from aws_safe_mcp.tools.s3 import get_s3_bucket_summary as get_s3_bucket_summary_tool
 from aws_safe_mcp.tools.s3 import list_s3_buckets as list_s3_buckets_tool
 from aws_safe_mcp.tools.s3 import list_s3_objects as list_s3_objects_tool
+from aws_safe_mcp.tools.sns import (
+    explain_sns_topic_dependencies as explain_sns_topic_dependencies_tool,
+)
 from aws_safe_mcp.tools.sns import get_sns_topic_summary as get_sns_topic_summary_tool
 from aws_safe_mcp.tools.sns import list_sns_topics as list_sns_topics_tool
 from aws_safe_mcp.tools.sqs import (
@@ -424,6 +427,23 @@ def _register_sns_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
             topic_arn=topic_arn,
             region=region,
             max_subscriptions=max_subscriptions,
+        )
+
+    @mcp.tool()
+    @audit.tool("explain_sns_topic_dependencies")
+    def explain_sns_topic_dependencies(
+        topic_arn: str,
+        region: str | None = None,
+        include_permission_checks: bool = True,
+        max_permission_checks: int | None = None,
+    ) -> dict[str, object]:
+        """Map SNS subscriptions, DLQs, and inferred delivery permissions."""
+        return explain_sns_topic_dependencies_tool(
+            runtime,
+            topic_arn=topic_arn,
+            region=region,
+            include_permission_checks=include_permission_checks,
+            max_permission_checks=max_permission_checks,
         )
 
 
