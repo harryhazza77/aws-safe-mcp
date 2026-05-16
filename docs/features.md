@@ -71,6 +71,8 @@ Related tools:
 - Map API Gateway routes and methods to integrations.
 - Detect Lambda targets and summarize whether Lambda resource policies appear
   to allow API Gateway invoke.
+- Diagnose one route with integration details, Lambda invoke permission, Lambda
+  configuration, and recent Lambda error signals.
 - Report route and integration warnings without returning raw Lambda policies.
 
 Related tools:
@@ -78,6 +80,7 @@ Related tools:
 - `list_api_gateways`
 - `get_api_gateway_summary`
 - `explain_api_gateway_dependencies`
+- `investigate_api_gateway_route`
 
 ## EventBridge And Event-Driven Flow
 

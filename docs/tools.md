@@ -377,6 +377,23 @@ Inputs:
 - `api_type` optional, one of `auto`, `rest`, `http`, or `websocket`
 - `region` optional
 
+### `investigate_api_gateway_route`
+
+Diagnoses one API Gateway route without invoking it. The tool finds the route,
+summarizes its integration, checks Lambda invoke permission when the target is
+Lambda, returns safe Lambda configuration metadata, and groups recent Lambda
+error log signals.
+
+Inputs:
+
+- `api_id` required
+- `route_key` optional
+- `method` optional
+- `path` optional
+- `api_type` optional, one of `auto`, `rest`, `http`, or `websocket`
+- `region` optional
+- `max_events` optional
+
 ## EventBridge
 
 ### `list_eventbridge_rules`

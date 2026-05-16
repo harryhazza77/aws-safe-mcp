@@ -10,6 +10,7 @@ from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.tools.apigateway import (
     explain_api_gateway_dependencies,
     get_api_gateway_summary,
+    investigate_api_gateway_route,
     list_api_gateways,
 )
 
@@ -109,6 +110,31 @@ class FakeLambdaClient:
             )
         }
 
+    def get_function_configuration(self, FunctionName: str) -> dict[str, Any]:
+        return {
+            "FunctionName": FunctionName.rsplit(":", 1)[-1],
+            "FunctionArn": FunctionName,
+            "Runtime": "python3.11",
+            "Handler": "index.handler",
+            "State": "Active",
+            "LastUpdateStatus": "Successful",
+            "Role": "arn:aws:iam::123456789012:role/dev-api-role",
+            "Timeout": 10,
+            "MemorySize": 128,
+        }
+
+
+class FakeLogsClient:
+    def filter_log_events(self, **_: Any) -> dict[str, Any]:
+        return {
+            "events": [
+                {
+                    "timestamp": 1778918870000,
+                    "message": "ERROR failed request 123",
+                }
+            ]
+        }
+
 
 class FakeRuntime:
     def __init__(self) -> None:
@@ -117,6 +143,7 @@ class FakeRuntime:
         self.rest = FakeRestApiClient()
         self.http = FakeHttpApiClient()
         self.lambda_client = FakeLambdaClient()
+        self.logs = FakeLogsClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
         assert region == "eu-west-2"
@@ -126,6 +153,8 @@ class FakeRuntime:
             return self.http
         if service_name == "lambda":
             return self.lambda_client
+        if service_name == "logs":
+            return self.logs
         raise AssertionError(service_name)
 
 
@@ -136,6 +165,7 @@ class RuntimeWithClients:
         self.rest = rest
         self.http = http
         self.lambda_client = lambda_client or FakeLambdaClient()
+        self.logs = FakeLogsClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
         assert region == "eu-west-2"
@@ -145,6 +175,8 @@ class RuntimeWithClients:
             return self.http
         if service_name == "lambda":
             return self.lambda_client
+        if service_name == "logs":
+            return self.logs
         raise AssertionError(service_name)
 
 
@@ -214,6 +246,58 @@ def test_explain_api_gateway_dependencies_returns_http_routes_and_policy() -> No
     assert result["routes"][0]["route_key"] == "GET /orders"
     assert result["routes"][0]["lambda_function_arn"].endswith(":function:dev-http")
     assert result["permission_hints"][0]["principal"] == "apigateway.amazonaws.com"
+
+
+def test_investigate_api_gateway_route_reports_lambda_permission_and_errors() -> None:
+    result = investigate_api_gateway_route(
+        FakeRuntime(),
+        "http1",
+        route_key="GET /orders",
+        api_type="http",
+        max_events=5,
+    )
+
+    assert result["route"]["route_key"] == "GET /orders"
+    assert result["integration"]["lambda_function_arn"].endswith(":function:dev-http")
+    assert result["lambda_permission"]["allows_apigateway_invoke"] is True
+    assert result["lambda"]["summary"]["runtime"] == "python3.11"
+    assert result["lambda"]["recent_error_count"] == 1
+    assert result["diagnostic_summary"] == (
+        "Route targets Lambda and recent Lambda error signals were found."
+    )
+    assert any("Lambda errors" in check for check in result["suggested_next_checks"])
+
+
+def test_investigate_api_gateway_route_reports_missing_invoke_permission() -> None:
+    class DenyingPolicyLambdaClient(FakeLambdaClient):
+        def get_policy(self, FunctionName: str) -> dict[str, Any]:
+            return {
+                "Policy": json.dumps(
+                    {
+                        "Statement": {
+                            "Effect": "Allow",
+                            "Principal": {"Service": "events.amazonaws.com"},
+                            "Action": ["lambda:InvokeFunction"],
+                            "Resource": FunctionName,
+                        }
+                    }
+                )
+            }
+
+    result = investigate_api_gateway_route(
+        RuntimeWithClients(
+            rest=EmptyRestApiClient(),
+            http=FakeHttpApiClient(),
+            lambda_client=DenyingPolicyLambdaClient(),
+        ),
+        "http1",
+        route_key="GET /orders",
+        api_type="http",
+    )
+
+    assert result["diagnostic_summary"] == (
+        "Route targets Lambda but API Gateway invoke permission was not found."
+    )
 
 
 def test_get_api_gateway_summary_follows_v2_route_pagination() -> None:

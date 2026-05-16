@@ -9,7 +9,13 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from aws_safe_mcp.auth import AwsRuntime
 from aws_safe_mcp.errors import ToolInputError, normalize_aws_error
-from aws_safe_mcp.tools.common import clamp_limit, isoformat, resolve_region
+from aws_safe_mcp.tools.common import (
+    bounded_filter_log_events,
+    clamp_limit,
+    isoformat,
+    log_event_groups,
+    resolve_region,
+)
 from aws_safe_mcp.tools.graph import dependency_graph_summary
 
 
@@ -97,6 +103,69 @@ def explain_api_gateway_dependencies(
         ClientError({"Error": {"Code": "NotFound", "Message": "API Gateway not found"}}, "GetApi"),
         "apigatewayv2.GetApi",
     )
+
+
+def investigate_api_gateway_route(
+    runtime: AwsRuntime,
+    api_id: str,
+    route_key: str | None = None,
+    method: str | None = None,
+    path: str | None = None,
+    api_type: str | None = None,
+    region: str | None = None,
+    max_events: int | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    dependencies = explain_api_gateway_dependencies(
+        runtime,
+        api_id=api_id,
+        api_type=api_type,
+        region=resolved_region,
+    )
+    route = _select_route(dependencies["routes"], route_key, method, path)
+    if route is None:
+        raise ToolInputError("route was not found for the supplied route_key, method, or path")
+
+    warnings = list(dependencies.get("warnings", []))
+    lambda_arn = route.get("lambda_function_arn")
+    lambda_policy = next(
+        (
+            item
+            for item in dependencies.get("lambda_resource_policies", [])
+            if item.get("function_arn") == lambda_arn
+        ),
+        None,
+    )
+    lambda_context = (
+        _route_lambda_context(runtime, resolved_region, str(lambda_arn), max_events, warnings)
+        if lambda_arn
+        else None
+    )
+    permission_allowed = (
+        lambda_policy.get("allows_apigateway_invoke")
+        if isinstance(lambda_policy, dict)
+        else None
+    )
+    return {
+        "api_id": api_id,
+        "api_type": dependencies.get("api_type"),
+        "region": resolved_region,
+        "route": route,
+        "integration": {
+            "type": route.get("integration_type"),
+            "uri": route.get("integration_uri"),
+            "lambda_function_arn": lambda_arn,
+        },
+        "lambda_permission": lambda_policy,
+        "lambda": lambda_context,
+        "warnings": warnings,
+        "diagnostic_summary": _route_diagnostic_summary(route, permission_allowed, lambda_context),
+        "suggested_next_checks": _route_suggested_next_checks(
+            route,
+            permission_allowed,
+            lambda_context,
+        ),
+    }
 
 
 def _list_rest_apis(
@@ -627,6 +696,140 @@ def _api_permission_checks(lambda_permissions: list[dict[str, Any]]) -> dict[str
         "checks": checks,
         "summary": _api_permission_summary(checks),
     }
+
+
+def _select_route(
+    routes: list[dict[str, Any]],
+    route_key: str | None,
+    method: str | None,
+    path: str | None,
+) -> dict[str, Any] | None:
+    if route_key:
+        for route in routes:
+            if route.get("route_key") == route_key:
+                return route
+    normalized_method = method.upper() if method else None
+    if normalized_method or path:
+        for route in routes:
+            if normalized_method and route.get("method") != normalized_method:
+                continue
+            if path and route.get("path") != path:
+                continue
+            return route
+    return routes[0] if len(routes) == 1 else None
+
+
+def _route_lambda_context(
+    runtime: AwsRuntime,
+    region: str,
+    function_arn: str,
+    max_events: int | None,
+    warnings: list[str],
+) -> dict[str, Any]:
+    limit = clamp_limit(
+        max_events,
+        default=20,
+        configured_max=runtime.config.max_results,
+        label="max_events",
+    )
+    function_name = function_arn.rsplit(":", 1)[-1]
+    summary = _route_lambda_summary(runtime, region, function_arn, warnings)
+    recent_errors = _route_lambda_recent_errors(runtime, region, function_name, limit, warnings)
+    return {
+        "function_name": function_name,
+        "function_arn": function_arn,
+        "summary": summary,
+        "recent_error_count": recent_errors["count"],
+        "recent_error_groups": recent_errors["groups"],
+    }
+
+
+def _route_lambda_summary(
+    runtime: AwsRuntime,
+    region: str,
+    function_arn: str,
+    warnings: list[str],
+) -> dict[str, Any] | None:
+    client = runtime.client("lambda", region=region)
+    try:
+        response = client.get_function_configuration(FunctionName=function_arn)
+    except (BotoCoreError, ClientError) as exc:
+        warning = str(normalize_aws_error(exc, "lambda.GetFunctionConfiguration"))
+        warnings.append(warning)
+        return None
+    return {
+        "runtime": response.get("Runtime"),
+        "handler": response.get("Handler"),
+        "state": response.get("State"),
+        "last_update_status": response.get("LastUpdateStatus"),
+        "role": response.get("Role"),
+        "timeout": response.get("Timeout"),
+        "memory_size": response.get("MemorySize"),
+    }
+
+
+def _route_lambda_recent_errors(
+    runtime: AwsRuntime,
+    region: str,
+    function_name: str,
+    limit: int,
+    warnings: list[str],
+) -> dict[str, Any]:
+    logs = runtime.client("logs", region=region)
+    request = {
+        "logGroupName": f"/aws/lambda/{function_name}",
+        "filterPattern": "?ERROR ?Error ?error ?Exception ?exception ?Traceback ?Task timed out",
+        "limit": limit,
+    }
+    try:
+        events = bounded_filter_log_events(logs, request, limit)
+    except (BotoCoreError, ClientError) as exc:
+        warning = str(normalize_aws_error(exc, "logs.FilterLogEvents"))
+        warnings.append(warning)
+        return {"count": 0, "groups": []}
+    compact_events = [
+        {
+            "timestamp": event.get("timestamp"),
+            "message": str(event.get("message") or "")[
+                : runtime.config.redaction.max_string_length
+            ],
+        }
+        for event in events
+    ]
+    return {"count": len(compact_events), "groups": log_event_groups(compact_events)}
+
+
+def _route_diagnostic_summary(
+    route: dict[str, Any],
+    permission_allowed: Any,
+    lambda_context: dict[str, Any] | None,
+) -> str:
+    if route.get("integration_available") is False:
+        return "Route integration could not be read."
+    if route.get("lambda_function_arn") and permission_allowed is False:
+        return "Route targets Lambda but API Gateway invoke permission was not found."
+    if lambda_context and lambda_context.get("recent_error_count"):
+        return "Route targets Lambda and recent Lambda error signals were found."
+    if route.get("lambda_function_arn"):
+        return "Route targets Lambda and no immediate permission or error signal was found."
+    return "Route uses a non-Lambda integration; inspect integration target health."
+
+
+def _route_suggested_next_checks(
+    route: dict[str, Any],
+    permission_allowed: Any,
+    lambda_context: dict[str, Any] | None,
+) -> list[str]:
+    checks = []
+    if route.get("integration_available") is False:
+        checks.append("Verify the API Gateway route target integration still exists.")
+    if route.get("lambda_function_arn") and permission_allowed is False:
+        checks.append("Add or fix Lambda resource-policy permission for API Gateway invoke.")
+    if lambda_context and lambda_context.get("recent_error_count"):
+        checks.append("Inspect the grouped Lambda errors and related CloudWatch logs.")
+    if not checks:
+        checks.append("Check API Gateway access logs, stage configuration, and downstream health.")
+    return checks
 
 
 def _api_permission_decision(item: dict[str, Any]) -> str:

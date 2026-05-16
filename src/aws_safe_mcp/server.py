@@ -8,6 +8,9 @@ from aws_safe_mcp.tools.apigateway import (
     explain_api_gateway_dependencies as explain_api_gateway_dependencies_tool,
 )
 from aws_safe_mcp.tools.apigateway import get_api_gateway_summary as get_api_gateway_summary_tool
+from aws_safe_mcp.tools.apigateway import (
+    investigate_api_gateway_route as investigate_api_gateway_route_tool,
+)
 from aws_safe_mcp.tools.apigateway import list_api_gateways as list_api_gateways_tool
 from aws_safe_mcp.tools.cloudwatch import cloudwatch_log_search as cloudwatch_log_search_tool
 from aws_safe_mcp.tools.cloudwatch import (
@@ -527,6 +530,29 @@ def _register_api_gateway_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRu
             api_id=api_id,
             api_type=api_type,
             region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("investigate_api_gateway_route")
+    def investigate_api_gateway_route(
+        api_id: str,
+        route_key: str | None = None,
+        method: str | None = None,
+        path: str | None = None,
+        api_type: str | None = None,
+        region: str | None = None,
+        max_events: int | None = None,
+    ) -> dict[str, object]:
+        """Diagnose one API Gateway route, Lambda permission, and Lambda errors."""
+        return investigate_api_gateway_route_tool(
+            runtime,
+            api_id=api_id,
+            route_key=route_key,
+            method=method,
+            path=path,
+            api_type=api_type,
+            region=region,
+            max_events=max_events,
         )
 
 

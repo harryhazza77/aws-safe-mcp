@@ -84,6 +84,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "list_api_gateways",
         "get_api_gateway_summary",
         "explain_api_gateway_dependencies",
+        "investigate_api_gateway_route",
         "list_eventbridge_rules",
         "explain_eventbridge_rule_dependencies",
         "investigate_eventbridge_rule_delivery",
