@@ -66,6 +66,8 @@ Related tools:
 - Find recent error-like CloudWatch log events for a Lambda.
 - Combine Lambda config, metrics, grouped logs, aliases, and event source
   mappings into a failure investigation.
+- Investigate cold-start and init failure signals from runtime/package shape,
+  memory, VPC attachment, init duration metrics, and bounded init log patterns.
 - Audit async Lambda failure paths, including retry age/attempt settings,
   on-failure destinations, DLQ fallback, reserved concurrency, and recent
   throttles, plus a retry topology graph of Lambda destinations, DLQ, and event
@@ -113,6 +115,7 @@ Related tools:
 - `get_lambda_alias_version_summary`
 - `get_lambda_recent_errors`
 - `investigate_lambda_failure`
+- `investigate_lambda_cold_start_init`
 - `audit_async_lambda_failure_path`
 - `investigate_lambda_concurrency_bottlenecks`
 - `explain_lambda_dependencies`

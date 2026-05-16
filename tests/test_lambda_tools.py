@@ -20,6 +20,7 @@ from aws_safe_mcp.tools.lambda_tools import (
     get_lambda_event_source_mapping_diagnostics,
     get_lambda_recent_errors,
     get_lambda_summary,
+    investigate_lambda_cold_start_init,
     investigate_lambda_concurrency_bottlenecks,
     investigate_lambda_failure,
     list_lambda_functions,
@@ -88,6 +89,7 @@ class FakeLambdaClient:
             "LastModified": "2026-01-01T00:00:00.000+0000",
             "MemorySize": 256,
             "Timeout": 30,
+            "CodeSize": 12345,
             "Role": "arn:aws:iam::123456789012:role/dev-lambda",
             "Description": "API handler",
             "Environment": {
@@ -255,6 +257,7 @@ class FakeCloudWatchClient:
             "throttles",
             "invocations",
             "duration",
+            "init_duration",
         ]
         timestamp = datetime(2026, 1, 1, tzinfo=UTC)
         return {
@@ -278,6 +281,12 @@ class FakeCloudWatchClient:
                     "Timestamps": [timestamp],
                     "StatusCode": "Complete",
                 },
+                {
+                    "Id": "init_duration",
+                    "Values": [900.0],
+                    "Timestamps": [timestamp],
+                    "StatusCode": "Complete",
+                },
             ]
         }
 
@@ -288,26 +297,39 @@ class FakeLogsClient:
 
     def filter_log_events(self, **kwargs: Any) -> dict[str, Any]:
         self.last_request = kwargs
-        return {
-            "events": [
-                {
-                    "timestamp": 1_767_225_600_000,
-                    "logStreamName": "2026/01/01/[$LATEST]abc",
-                    "message": "ERROR request 123 failed for user 456\nTraceback line",
-                },
-                {
-                    "timestamp": 1_767_225_660_000,
-                    "logStreamName": "2026/01/01/[$LATEST]abc",
-                    "message": "ERROR request 789 failed for user 111",
-                },
-                {
-                    "timestamp": 1_767_225_720_000,
-                    "logStreamName": "2026/01/01/[$LATEST]def",
-                    "message": "AccessDeniedException: not authorized to perform s3:GetObject "
-                    "secret=must-not-leak " + ("x" * 250),
-                },
-            ]
-        }
+        error_events = [
+            {
+                "timestamp": 1_767_225_600_000,
+                "logStreamName": "2026/01/01/[$LATEST]abc",
+                "message": "ERROR request 123 failed for user 456\nTraceback line",
+            },
+            {
+                "timestamp": 1_767_225_660_000,
+                "logStreamName": "2026/01/01/[$LATEST]abc",
+                "message": "ERROR request 789 failed for user 111",
+            },
+            {
+                "timestamp": 1_767_225_720_000,
+                "logStreamName": "2026/01/01/[$LATEST]def",
+                "message": "AccessDeniedException: not authorized to perform s3:GetObject "
+                "secret=must-not-leak " + ("x" * 250),
+            },
+        ]
+        init_events = [
+            {
+                "timestamp": 1_767_225_780_000,
+                "logStreamName": "2026/01/01/[$LATEST]init",
+                "message": "INIT_START Runtime Version python3.12",
+            },
+            {
+                "timestamp": 1_767_225_790_000,
+                "logStreamName": "2026/01/01/[$LATEST]init",
+                "message": "REPORT RequestId abc Init Duration: 900.00 ms Duration: 10.00 ms",
+            },
+        ]
+        if "Init Duration" in str(kwargs.get("filterPattern")):
+            return {"events": init_events}
+        return {"events": error_events}
 
 
 class ThrottledCloudWatchClient(FakeCloudWatchClient):
@@ -1079,6 +1101,20 @@ def test_investigate_lambda_failure_summarizes_signals_and_next_checks() -> None
     assert result["configuration"]["handler"] == "app.handler"
     assert result["configuration"]["aliases"]["count"] == 1
     assert result["configuration"]["event_sources"]["count"] == 1
+
+
+def test_investigate_lambda_cold_start_init_reports_config_metrics_and_logs() -> None:
+    result = investigate_lambda_cold_start_init(FakeRuntime(), "dev-api", since_minutes=30)
+
+    assert result["diagnostic_summary"]["status"] == "needs_attention"
+    assert "vpc_attachment_can_increase_cold_start" in result["diagnostic_summary"][
+        "likely_causes"
+    ]
+    assert "low_memory_configuration" in result["diagnostic_summary"]["likely_causes"]
+    assert result["signals"]["init_duration_ms_last_hour"] == 900.0
+    assert result["log_signals"]["init_report_count"] == 1
+    assert result["configuration"]["code_size_bytes"] == 12345
+    assert "must-not-leak" not in str(result)
 
 
 def test_investigate_lambda_failure_reports_no_recent_errors() -> None:

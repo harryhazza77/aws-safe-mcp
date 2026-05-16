@@ -303,6 +303,45 @@ def investigate_lambda_failure(
     }
 
 
+def investigate_lambda_cold_start_init(
+    runtime: AwsRuntime,
+    function_name: str,
+    since_minutes: int | None = 60,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_name = require_lambda_name(function_name)
+    summary = get_lambda_summary(runtime, required_name, region=resolved_region)
+    log_signals = _lambda_init_log_signals(
+        runtime,
+        required_name,
+        resolved_region,
+        since_minutes=since_minutes,
+    )
+    signals = _lambda_cold_start_signals(summary, log_signals)
+    return {
+        "function_name": required_name,
+        "region": resolved_region,
+        "diagnostic_summary": _lambda_cold_start_summary(signals),
+        "configuration": {
+            "runtime": summary.get("runtime"),
+            "package_type": summary.get("package_type"),
+            "code_size_bytes": summary.get("code_size_bytes"),
+            "memory_mb": summary.get("memory_mb"),
+            "architecture": summary.get("architecture"),
+            "timeout_seconds": summary.get("timeout_seconds"),
+            "vpc": summary.get("vpc"),
+            "state": summary.get("state"),
+            "last_update_status": summary.get("last_update_status"),
+        },
+        "recent_metrics": summary.get("recent_metrics"),
+        "log_signals": log_signals,
+        "signals": signals,
+        "suggested_next_checks": _lambda_cold_start_next_checks(signals),
+        "warnings": [*_lambda_summary_warnings(summary), *log_signals.get("warnings", [])],
+    }
+
+
 def audit_async_lambda_failure_path(
     runtime: AwsRuntime,
     function_name: str,
@@ -826,6 +865,9 @@ def _lambda_summary(item: dict[str, Any], max_string_length: int) -> dict[str, A
         "function_arn": item.get("FunctionArn"),
         "runtime": item.get("Runtime"),
         "handler": item.get("Handler"),
+        "package_type": item.get("PackageType") or "Zip",
+        "code_size_bytes": item.get("CodeSize"),
+        "architecture": (item.get("Architectures") or [None])[0],
         "last_modified": item.get("LastModified"),
         "memory_mb": item.get("MemorySize"),
         "timeout_seconds": item.get("Timeout"),
@@ -1781,6 +1823,7 @@ def _lambda_recent_metrics(
         "throttles": metrics.get("throttles", _empty_metric_summary()),
         "invocations": metrics.get("invocations", _empty_metric_summary()),
         "max_duration_ms": metrics.get("duration", _empty_metric_summary()),
+        "init_duration_ms": metrics.get("init_duration", _empty_metric_summary()),
     }
 
 
@@ -3541,6 +3584,7 @@ def _empty_lambda_metrics(warning: str) -> dict[str, Any]:
         "throttles": empty,
         "invocations": empty,
         "max_duration_ms": empty,
+        "init_duration_ms": empty,
     }
 
 
@@ -3554,6 +3598,7 @@ def _lambda_metric_data_queries(function_name: str) -> list[dict[str, Any]]:
         _lambda_metric_data_query("throttles", "Throttles", "Sum", function_name),
         _lambda_metric_data_query("invocations", "Invocations", "Sum", function_name),
         _lambda_metric_data_query("duration", "Duration", "Maximum", function_name),
+        _lambda_metric_data_query("init_duration", "InitDuration", "Maximum", function_name),
     ]
 
 
@@ -3584,7 +3629,7 @@ def _summarize_metric_data_result(result: dict[str, Any]) -> dict[str, Any]:
     if not values:
         return _empty_metric_summary()
 
-    value = max(values) if result.get("Id") == "duration" else sum(values)
+    value = max(values) if result.get("Id") in {"duration", "init_duration"} else sum(values)
     latest = max(timestamps) if timestamps else None
 
     return {
@@ -3651,6 +3696,113 @@ def _lambda_failure_signals(
         "vpc_enabled": bool((summary.get("vpc") or {}).get("enabled")),
         "dead_letter_configured": bool((summary.get("dead_letter") or {}).get("configured")),
     }
+
+
+def _lambda_init_log_signals(
+    runtime: AwsRuntime,
+    function_name: str,
+    region: str,
+    since_minutes: int | None,
+) -> dict[str, Any]:
+    minutes = clamp_since_minutes(
+        since_minutes,
+        default=60,
+        configured_max=runtime.config.max_since_minutes,
+    )
+    logs = runtime.client("logs", region=region)
+    log_group_name = f"/aws/lambda/{function_name}"
+    end = datetime.now(UTC)
+    start = end - timedelta(minutes=minutes)
+    warnings: list[str] = []
+    try:
+        request = {
+            "logGroupName": log_group_name,
+            "startTime": int(start.timestamp() * 1000),
+            "endTime": int(end.timestamp() * 1000),
+            "filterPattern": (
+                '?"Init Duration" ?INIT_START ?Runtime.ImportModuleError ?Runtime.ExitError'
+            ),
+        }
+        events = bounded_filter_log_events(logs, request, 25)
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "logs.FilterLogEvents")))
+        events = []
+    summaries = [
+        _log_event_summary(event, runtime.config.redaction.max_string_length) for event in events
+    ]
+    messages = " ".join(str(item.get("message") or "") for item in summaries).lower()
+    return {
+        "window_minutes": minutes,
+        "event_count": len(summaries),
+        "init_report_count": messages.count("init duration"),
+        "init_error_count": sum(
+            phrase in messages
+            for phrase in ["runtime.importmoduleerror", "runtime.exiterror", "init error"]
+        ),
+        "sample_events": summaries[:5],
+        "warnings": warnings,
+    }
+
+
+def _lambda_cold_start_signals(
+    summary: dict[str, Any],
+    log_signals: dict[str, Any],
+) -> dict[str, Any]:
+    metrics = summary.get("recent_metrics", {})
+    init_duration_ms = _metric_value(metrics, "init_duration_ms")
+    code_size_bytes = int(summary.get("code_size_bytes") or 0)
+    timeout_seconds = float(summary.get("timeout_seconds") or 0)
+    memory_mb = int(summary.get("memory_mb") or 0)
+    return {
+        "init_duration_ms_last_hour": init_duration_ms,
+        "init_reports_in_logs": log_signals.get("init_report_count", 0),
+        "init_errors_in_logs": log_signals.get("init_error_count", 0),
+        "large_package": code_size_bytes >= 50_000_000,
+        "low_memory": 0 < memory_mb <= 256,
+        "vpc_enabled": bool((summary.get("vpc") or {}).get("enabled")),
+        "timeout_seconds": timeout_seconds,
+        "init_duration_near_timeout": bool(
+            timeout_seconds > 0 and init_duration_ms >= timeout_seconds * 1000 * 0.5
+        ),
+        "state": summary.get("state"),
+        "last_update_status": summary.get("last_update_status"),
+    }
+
+
+def _lambda_cold_start_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    causes = []
+    if signals["init_errors_in_logs"]:
+        causes.append("init_errors_in_recent_logs")
+    if signals["init_duration_near_timeout"]:
+        causes.append("init_duration_near_timeout")
+    if signals["large_package"]:
+        causes.append("large_code_package")
+    if signals["vpc_enabled"]:
+        causes.append("vpc_attachment_can_increase_cold_start")
+    if signals["low_memory"]:
+        causes.append("low_memory_configuration")
+    if signals["last_update_status"] not in {None, "Successful"}:
+        causes.append("last_update_not_successful")
+    return {
+        "status": "needs_attention" if causes else "no_cold_start_signals_detected",
+        "likely_causes": causes,
+        "confidence": "high" if signals["init_errors_in_logs"] else "medium" if causes else "low",
+    }
+
+
+def _lambda_cold_start_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if signals["init_errors_in_logs"]:
+        checks.append("Inspect init/import errors and deployment package dependencies.")
+    if signals["large_package"]:
+        checks.append("Review package or image size and remove unused startup dependencies.")
+    if signals["vpc_enabled"]:
+        checks.append("Check VPC attachment, subnet IP capacity, and endpoint/NAT readiness.")
+    if signals["low_memory"]:
+        checks.append("Consider whether memory is too low for initialization work.")
+    if not checks:
+        checks.append("No strong cold-start/init signal found in bounded metrics and logs.")
+    return checks
 
 
 def _lambda_summary_warnings(summary: dict[str, Any]) -> list[str]:

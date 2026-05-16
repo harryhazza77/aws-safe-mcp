@@ -164,6 +164,19 @@ Inputs:
 - `since_minutes` optional, default `60`
 - `region` optional
 
+### `investigate_lambda_cold_start_init`
+
+Correlates Lambda runtime/package shape, memory, architecture, timeout, VPC
+attachment, init duration metrics, and bounded init/error log patterns to
+explain cold-start or initialization risks. It does not return payloads,
+environment values, or secret values.
+
+Inputs:
+
+- `function_name` required
+- `since_minutes` optional, default `60`
+- `region` optional
+
 ### `audit_async_lambda_failure_path`
 
 Audits where asynchronously invoked Lambda events go when invocation fails. The

@@ -88,6 +88,9 @@ from aws_safe_mcp.tools.lambda_tools import (
     get_lambda_summary as get_lambda_summary_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
+    investigate_lambda_cold_start_init as investigate_lambda_cold_start_init_tool,
+)
+from aws_safe_mcp.tools.lambda_tools import (
     investigate_lambda_concurrency_bottlenecks as investigate_lambda_concurrency_bottlenecks_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
@@ -333,6 +336,21 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
     ) -> dict[str, object]:
         """Diagnose recent Lambda failures from config, metrics, and logs."""
         return investigate_lambda_failure_tool(
+            runtime,
+            function_name=function_name,
+            since_minutes=since_minutes,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("investigate_lambda_cold_start_init")
+    def investigate_lambda_cold_start_init(
+        function_name: str,
+        since_minutes: int | None = 60,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Diagnose Lambda cold-start and init failure signals from config, metrics, and logs."""
+        return investigate_lambda_cold_start_init_tool(
             runtime,
             function_name=function_name,
             since_minutes=since_minutes,
