@@ -35,3 +35,53 @@ All planned feature candidates have been implemented.
 ## Suggested Order
 
 Use the feature candidate order above.
+
+## Documentation Refresh Backlog
+
+The persona-driven documentation review delivered Tier 1 + Tier 2 in
+commit `1d5f6db`. Tier 3 (polish edits to existing files) and Tier 4
+(consolidation refactors) are deferred. They live here so they are not
+lost.
+
+### Tier 3 — Polish edits to existing files
+
+- `README.md`: add config-file note before the `uvx` block; CHANGELOG
+  link in the badges section; new "Feedback and Ideas" section that
+  points to GitHub issues.
+- `docs/claude-desktop.md`: add explicit `claude_desktop_config.json`
+  path for macOS and Linux.
+- `docs/cursor.md`: add explicit Cursor MCP-config file path.
+- `docs/ai-clients.md`: rephrase the `get_aws_auth_status` line as a
+  safety check rather than a startup requirement; move smoke prompts
+  into `docs/prompts.md`.
+- `docs/architecture.md`: add a sanitized audit-log JSON example; add a
+  data-flow diagram aligned with `docs/security/threat-model.md`.
+- `docs/tools.md`: add a one-line SRE use case before each tool's
+  description.
+- `SECURITY.md`: add a "Release Safety Audit" section linking each
+  safety gate (no mutating verbs, audit-wrap coverage, redaction
+  properties) to the test that enforces it.
+- `CONTRIBUTING.md`: trim duplication with `docs/development.md`; link
+  to `docs/contributing/add-a-tool.md` and
+  `docs/naming-conventions.md`.
+- `.github/ISSUE_TEMPLATE/feature.md`: new template covering user
+  intent, affected service, scope estimate, safety-rule check.
+- `.github/ISSUE_TEMPLATE/limitation.md`: new template for documenting
+  known constraints.
+
+### Tier 4 — Consolidation refactors
+
+- Merge safety rules duplicated across `docs/goal.md`, `README.md`,
+  `docs/architecture.md`, and `SECURITY.md` into a single canonical
+  `docs/standards.md`; replace duplicates with links.
+- Decide the fate of `docs/goal.md`: retire if stale, or rewrite as a
+  live execution prompt that references `docs/vision.md` and
+  `docs/backlog.md`.
+- Split `docs/release.md`: keep only rationale; move runbook content
+  into `docs/release-checklist.md` (already created in Tier 1).
+
+### Source
+
+These items came from a persona-driven documentation review run in
+commit `1d5f6db`. The persona prompts are at `docs/personas/`; replay
+them on the docs after Tier 3+4 land to confirm gaps closed.
