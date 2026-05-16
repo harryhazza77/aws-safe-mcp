@@ -11,6 +11,7 @@ from aws_safe_mcp.tools.cloudwatch import (
     check_cloudwatch_logs_writeability,
     cloudwatch_log_search,
     cloudwatch_logs_insights_query,
+    find_cloudwatch_alarm_coverage_gaps,
     get_cloudwatch_alarm_summary,
     list_cloudwatch_alarms,
     list_cloudwatch_log_groups,
@@ -301,6 +302,49 @@ def test_get_cloudwatch_alarm_summary_returns_one_alarm() -> None:
     assert result["alarm"]["state_value"] == "ALARM"
     assert result["alarm"]["inferred_resources"][0]["service"] == "lambda"
     assert runtime.cloudwatch_client.last_request == {"AlarmNames": ["dev-api-errors"]}
+
+
+def test_find_cloudwatch_alarm_coverage_gaps_suggests_missing_dimensions() -> None:
+    result = find_cloudwatch_alarm_coverage_gaps(FakeRuntime(), "lambda", "dev-api")
+
+    assert result["summary"] == {
+        "status": "gaps_found",
+        "expected_count": 3,
+        "covered_count": 1,
+        "missing_count": 2,
+        "weak_action_count": 0,
+    }
+    assert result["coverage"][0]["coverage"] == "errors"
+    assert result["coverage"][0]["covered"] is True
+    assert result["missing"] == [
+        {
+            "coverage": "throttles",
+            "namespace": "AWS/Lambda",
+            "metric_name": "Throttles",
+            "suggested_dimensions": [{"name": "FunctionName", "value": "dev-api"}],
+            "covered": False,
+            "alarm_names": [],
+            "actionless_alarm_names": [],
+        },
+        {
+            "coverage": "duration",
+            "namespace": "AWS/Lambda",
+            "metric_name": "Duration",
+            "suggested_dimensions": [{"name": "FunctionName", "value": "dev-api"}],
+            "covered": False,
+            "alarm_names": [],
+            "actionless_alarm_names": [],
+        },
+    ]
+    assert "dimensions" in result["suggested_next_checks"][0]
+
+
+def test_find_cloudwatch_alarm_coverage_gaps_flags_actionless_existing_alarms() -> None:
+    result = find_cloudwatch_alarm_coverage_gaps(FakeRuntime(), "sqs", "dev-queue")
+
+    assert result["summary"]["weak_action_count"] == 1
+    assert result["coverage"][0]["actionless_alarm_names"] == ["dev-queue-depth"]
+    assert any("Review actions" in check for check in result["suggested_next_checks"])
 
 
 def test_cloudwatch_log_search_follows_next_token_until_limit() -> None:

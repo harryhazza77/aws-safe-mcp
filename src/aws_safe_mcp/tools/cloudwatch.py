@@ -291,6 +291,47 @@ def get_cloudwatch_alarm_summary(
     }
 
 
+def find_cloudwatch_alarm_coverage_gaps(
+    runtime: AwsRuntime,
+    resource_type: str,
+    resource_name: str,
+    region: str | None = None,
+    max_results: int | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    normalized_type = _require_alarm_coverage_resource_type(resource_type)
+    normalized_name = _require_alarm_coverage_resource_name(resource_name)
+    limit = clamp_limit(
+        max_results,
+        default=100,
+        configured_max=runtime.config.max_results,
+        label="max_results",
+    )
+    alarms = _list_metric_alarms_for_coverage(runtime, resolved_region, limit)
+    expected = _expected_alarm_coverages(normalized_type, normalized_name)
+    coverage = [
+        _alarm_coverage_item(requirement, alarms)
+        for requirement in expected
+    ]
+    missing = [item for item in coverage if not item["covered"]]
+    weak = [item for item in coverage if item["covered"] and item["actionless_alarm_names"]]
+    return {
+        "resource_type": normalized_type,
+        "resource_name": normalized_name,
+        "region": resolved_region,
+        "summary": {
+            "status": "gaps_found" if missing else "covered",
+            "expected_count": len(expected),
+            "covered_count": len(expected) - len(missing),
+            "missing_count": len(missing),
+            "weak_action_count": len(weak),
+        },
+        "coverage": coverage,
+        "missing": missing,
+        "suggested_next_checks": _alarm_coverage_next_checks(missing, weak),
+    }
+
+
 def _require_query(query: str) -> str:
     normalized = query.strip()
     if not normalized:
@@ -312,6 +353,23 @@ def _require_alarm_name(alarm_name: str) -> str:
     normalized = alarm_name.strip()
     if not normalized:
         raise ToolInputError("alarm_name is required")
+    return normalized
+
+
+def _require_alarm_coverage_resource_type(resource_type: str) -> str:
+    normalized = resource_type.strip().lower().replace("-", "_")
+    allowed = {"lambda", "sqs", "eventbridge_rule", "apigateway_route"}
+    if normalized not in allowed:
+        raise ToolInputError(
+            "resource_type must be one of lambda, sqs, eventbridge_rule, apigateway_route"
+        )
+    return normalized
+
+
+def _require_alarm_coverage_resource_name(resource_name: str) -> str:
+    normalized = resource_name.strip()
+    if not normalized:
+        raise ToolInputError("resource_name is required")
     return normalized
 
 
@@ -579,6 +637,136 @@ def _alarm_inventory_summary(alarms: list[dict[str, Any]]) -> dict[str, Any]:
         "by_linked_service": services,
         "alarm_count": len(alarms),
     }
+
+
+def _list_metric_alarms_for_coverage(
+    runtime: AwsRuntime,
+    region: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    client = runtime.client("cloudwatch", region=region)
+    alarms: list[dict[str, Any]] = []
+    next_token: str | None = None
+    try:
+        while len(alarms) < limit:
+            request: dict[str, Any] = {"MaxRecords": min(limit - len(alarms), 100)}
+            if next_token:
+                request["NextToken"] = next_token
+            response = client.describe_alarms(**request)
+            for item in response.get("MetricAlarms", []):
+                alarms.append(_metric_alarm_summary(item))
+                if len(alarms) >= limit:
+                    break
+            next_token = response.get("NextToken")
+            if not next_token:
+                break
+    except (BotoCoreError, ClientError) as exc:
+        raise normalize_aws_error(exc, "cloudwatch.DescribeAlarms") from exc
+    return alarms
+
+
+def _expected_alarm_coverages(resource_type: str, resource_name: str) -> list[dict[str, Any]]:
+    by_type = {
+        "lambda": [
+            ("errors", "AWS/Lambda", "Errors", {"FunctionName": resource_name}),
+            ("throttles", "AWS/Lambda", "Throttles", {"FunctionName": resource_name}),
+            ("duration", "AWS/Lambda", "Duration", {"FunctionName": resource_name}),
+        ],
+        "sqs": [
+            (
+                "backlog",
+                "AWS/SQS",
+                "ApproximateNumberOfMessagesVisible",
+                {"QueueName": resource_name},
+            ),
+            (
+                "oldest_message_age",
+                "AWS/SQS",
+                "ApproximateAgeOfOldestMessage",
+                {"QueueName": resource_name},
+            ),
+            (
+                "dlq_depth",
+                "AWS/SQS",
+                "ApproximateNumberOfMessagesVisible",
+                {"QueueName": f"{resource_name}-dlq"},
+            ),
+        ],
+        "eventbridge_rule": [
+            ("failed_invocations", "AWS/Events", "FailedInvocations", {"RuleName": resource_name}),
+            (
+                "failed_to_dlq",
+                "AWS/Events",
+                "InvocationsFailedToBeSentToDLQ",
+                {"RuleName": resource_name},
+            ),
+        ],
+        "apigateway_route": [
+            ("5xx_errors", "AWS/ApiGateway", "5XXError", {"ApiId": resource_name}),
+            ("4xx_errors", "AWS/ApiGateway", "4XXError", {"ApiId": resource_name}),
+            ("latency", "AWS/ApiGateway", "Latency", {"ApiId": resource_name}),
+        ],
+    }
+    return [
+        {
+            "coverage": coverage,
+            "namespace": namespace,
+            "metric_name": metric_name,
+            "suggested_dimensions": [
+                {"name": name, "value": value} for name, value in dimensions.items()
+            ],
+        }
+        for coverage, namespace, metric_name, dimensions in by_type[resource_type]
+    ]
+
+
+def _alarm_coverage_item(
+    requirement: dict[str, Any],
+    alarms: list[dict[str, Any]],
+) -> dict[str, Any]:
+    matches = [
+        alarm
+        for alarm in alarms
+        if alarm.get("namespace") == requirement["namespace"]
+        and alarm.get("metric_name") == requirement["metric_name"]
+        and _alarm_has_dimensions(alarm, requirement["suggested_dimensions"])
+    ]
+    return {
+        **requirement,
+        "covered": bool(matches),
+        "alarm_names": [str(alarm.get("alarm_name")) for alarm in matches],
+        "actionless_alarm_names": [
+            str(alarm.get("alarm_name"))
+            for alarm in matches
+            if not alarm.get("actions_enabled") or not alarm.get("alarm_action_count")
+        ],
+    }
+
+
+def _alarm_has_dimensions(alarm: dict[str, Any], dimensions: list[dict[str, str]]) -> bool:
+    alarm_dimensions = {
+        str(item.get("name")): str(item.get("value")) for item in alarm.get("dimensions", [])
+    }
+    return all(alarm_dimensions.get(item["name"]) == item["value"] for item in dimensions)
+
+
+def _alarm_coverage_next_checks(
+    missing: list[dict[str, Any]],
+    weak: list[dict[str, Any]],
+) -> list[str]:
+    checks = [
+        f"Consider {item['coverage']} alarm on {item['namespace']} {item['metric_name']} "
+        f"with dimensions {item['suggested_dimensions']}."
+        for item in missing
+    ]
+    checks.extend(
+        f"Review actions for existing {item['coverage']} alarm(s): "
+        f"{', '.join(item['actionless_alarm_names'])}."
+        for item in weak
+    )
+    if not checks:
+        checks.append("No alarm coverage gaps found for the selected resource metadata.")
+    return checks
 
 
 def _millis_to_datetime(value: Any) -> datetime | None:

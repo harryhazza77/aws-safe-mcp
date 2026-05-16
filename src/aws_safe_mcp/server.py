@@ -23,6 +23,9 @@ from aws_safe_mcp.tools.cloudwatch import (
     cloudwatch_logs_insights_query as cloudwatch_logs_insights_query_tool,
 )
 from aws_safe_mcp.tools.cloudwatch import (
+    find_cloudwatch_alarm_coverage_gaps as find_cloudwatch_alarm_coverage_gaps_tool,
+)
+from aws_safe_mcp.tools.cloudwatch import (
     get_cloudwatch_alarm_summary as get_cloudwatch_alarm_summary_tool,
 )
 from aws_safe_mcp.tools.cloudwatch import list_cloudwatch_alarms as list_cloudwatch_alarms_tool
@@ -854,6 +857,23 @@ def _register_cloudwatch_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRun
             runtime,
             alarm_name=alarm_name,
             region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("find_cloudwatch_alarm_coverage_gaps")
+    def find_cloudwatch_alarm_coverage_gaps(
+        resource_type: str,
+        resource_name: str,
+        region: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """Find missing alarm coverage and suggest metric dimensions."""
+        return find_cloudwatch_alarm_coverage_gaps_tool(
+            runtime,
+            resource_type=resource_type,
+            resource_name=resource_name,
+            region=region,
+            max_results=max_results,
         )
 
     @mcp.tool()

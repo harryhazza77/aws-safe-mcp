@@ -100,6 +100,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "get_ecs_service_summary",
         "list_cloudwatch_alarms",
         "get_cloudwatch_alarm_summary",
+        "find_cloudwatch_alarm_coverage_gaps",
         "list_cloudwatch_log_groups",
         "cloudwatch_log_search",
         "cloudwatch_logs_insights_query",

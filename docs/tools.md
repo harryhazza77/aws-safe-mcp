@@ -591,6 +591,21 @@ Inputs:
 - `alarm_name` required
 - `region` optional
 
+### `find_cloudwatch_alarm_coverage_gaps`
+
+Checks expected alarm coverage for one Lambda, SQS queue, EventBridge rule, or
+API Gateway route. It reports covered and missing metrics, existing alarms with
+disabled or missing actions, and suggested metric dimensions. It does not create
+or update alarms.
+
+Inputs:
+
+- `resource_type` required, one of `lambda`, `sqs`, `eventbridge_rule`,
+  `apigateway_route`
+- `resource_name` required
+- `region` optional
+- `max_results` optional
+
 ## CloudWatch Logs
 
 ### `list_cloudwatch_log_groups`

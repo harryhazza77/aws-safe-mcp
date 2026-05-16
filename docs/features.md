@@ -253,6 +253,9 @@ Related tools:
 
 - List CloudWatch alarms and summarize a named alarm with state, metric shape,
   action counts, and likely linked resources from dimensions.
+- Find CloudWatch alarm coverage gaps for Lambda, SQS, EventBridge rules, and
+  API Gateway routes, returning suggested metric dimensions without creating
+  alarms.
 - List CloudWatch log groups by prefix.
 - Search one known log group with bounded `filter_log_events`.
 - Run bounded Logs Insights queries against one explicit log group with
@@ -266,6 +269,7 @@ Related tools:
 
 - `list_cloudwatch_alarms`
 - `get_cloudwatch_alarm_summary`
+- `find_cloudwatch_alarm_coverage_gaps`
 - `list_cloudwatch_log_groups`
 - `cloudwatch_log_search`
 - `cloudwatch_logs_insights_query`
