@@ -54,6 +54,7 @@ from aws_safe_mcp.tools.eventbridge import (
 from aws_safe_mcp.tools.iam import get_iam_role_summary as get_iam_role_summary_tool
 from aws_safe_mcp.tools.identity import aws_auth_status as get_aws_auth_status
 from aws_safe_mcp.tools.identity import aws_identity as get_aws_identity
+from aws_safe_mcp.tools.kms import check_kms_dependent_path as check_kms_dependent_path_tool
 from aws_safe_mcp.tools.kms import get_kms_key_summary as get_kms_key_summary_tool
 from aws_safe_mcp.tools.kms import list_kms_keys as list_kms_keys_tool
 from aws_safe_mcp.tools.lambda_tools import (
@@ -204,6 +205,23 @@ def _register_kms_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
         return get_kms_key_summary_tool(
             runtime,
             key_id=key_id,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("check_kms_dependent_path")
+    def check_kms_dependent_path(
+        key_id: str,
+        role_arn: str,
+        service_principal: str | None = None,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Check whether a role and optional AWS service principal can use a KMS key."""
+        return check_kms_dependent_path_tool(
+            runtime,
+            key_id=key_id,
+            role_arn=role_arn,
+            service_principal=service_principal,
             region=region,
         )
 

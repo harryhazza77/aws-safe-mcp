@@ -37,11 +37,14 @@ Related tools:
   origin, and creation/deletion timestamps.
 - Summarize one KMS key with aliases, rotation status, and policy name count
   without decrypting, generating data keys, or returning key policy JSON.
+- Check whether an IAM role and optional AWS service principal have the KMS
+  actions needed for encrypted service paths without returning key policy JSON.
 
 Related tools:
 
 - `list_kms_keys`
 - `get_kms_key_summary`
+- `check_kms_dependent_path`
 
 ## ECS Inspection
 

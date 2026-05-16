@@ -60,6 +60,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "get_iam_role_summary",
         "list_kms_keys",
         "get_kms_key_summary",
+        "check_kms_dependent_path",
         "list_lambda_functions",
         "get_lambda_summary",
         "get_lambda_event_source_mapping_diagnostics",

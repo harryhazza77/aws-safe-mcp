@@ -8,7 +8,7 @@ from botocore.exceptions import ClientError
 
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
-from aws_safe_mcp.tools.kms import get_kms_key_summary, list_kms_keys
+from aws_safe_mcp.tools.kms import check_kms_dependent_path, get_kms_key_summary, list_kms_keys
 
 
 class FakeKmsClient:
@@ -63,6 +63,27 @@ class FakeKmsClient:
         assert KeyId == "key-1"
         return {"PolicyNames": ["default"]}
 
+    def get_key_policy(self, KeyId: str, PolicyName: str) -> dict[str, Any]:
+        assert KeyId == "key-1"
+        assert PolicyName == "default"
+        return {
+            "Policy": {
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {"Service": "sqs.amazonaws.com"},
+                        "Action": ["kms:GenerateDataKey", "kms:Decrypt"],
+                        "Resource": "*",
+                    }
+                ]
+            }
+        }
+
+
+class FakeIamClient:
+    def simulate_principal_policy(self, **_: Any) -> dict[str, Any]:
+        return {"EvaluationResults": [{"EvalDecision": "allowed"}]}
+
 
 class FakeRuntime:
     config = AwsSafeConfig(allowed_account_ids=["123456789012"])
@@ -70,11 +91,15 @@ class FakeRuntime:
 
     def __init__(self) -> None:
         self.kms_client = FakeKmsClient()
+        self.iam_client = FakeIamClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
-        assert service_name == "kms"
-        assert region == "eu-west-2"
-        return self.kms_client
+        if service_name == "kms":
+            assert region == "eu-west-2"
+            return self.kms_client
+        if service_name == "iam":
+            return self.iam_client
+        raise AssertionError(f"unexpected service {service_name}")
 
 
 def test_list_kms_keys_returns_metadata_inventory() -> None:
@@ -130,6 +155,33 @@ def test_get_kms_key_summary_keeps_optional_warnings() -> None:
     assert result["aliases"] == []
     assert result["policy"]["policy_name_count"] == 0
     assert len(result["warnings"]) == 3
+
+
+def test_check_kms_dependent_path_checks_role_and_service_principal() -> None:
+    result = check_kms_dependent_path(
+        FakeRuntime(),
+        "key-1",
+        "arn:aws:iam::123456789012:role/app-role",
+        service_principal="sqs.amazonaws.com",
+    )
+
+    assert result["path_summary"] == {
+        "key_usable": True,
+        "role_has_required_actions": True,
+        "service_principal_has_data_key_access": True,
+        "likely_usable": True,
+    }
+    assert len(result["role_permission_checks"]) == 3
+    assert result["service_principal_check"]["allowed_actions"] == [
+        "kms:Decrypt",
+        "kms:GenerateDataKey",
+    ]
+    assert "Statement" not in str(result)
+
+
+def test_check_kms_dependent_path_rejects_bad_role_arn() -> None:
+    with pytest.raises(ToolInputError, match="role_arn must be an IAM role ARN"):
+        check_kms_dependent_path(FakeRuntime(), "key-1", "not-a-role")
 
 
 class FailingListKmsClient(FakeKmsClient):

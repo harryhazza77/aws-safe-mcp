@@ -75,6 +75,20 @@ Inputs:
 - `key_id` required
 - `region` optional
 
+### `check_kms_dependent_path`
+
+Checks whether an IAM role and optional AWS service principal can use a KMS key
+for encrypted service paths. It simulates role permissions for decrypt, encrypt,
+and data-key generation, summarizes matching service-principal key-policy
+actions, and never returns the key policy document.
+
+Inputs:
+
+- `key_id` required
+- `role_arn` required
+- `service_principal` optional
+- `region` optional
+
 ## Lambda
 
 ### `list_lambda_functions`

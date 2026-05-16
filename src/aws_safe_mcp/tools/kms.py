@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -82,10 +83,68 @@ def get_kms_key_summary(
     }
 
 
+def check_kms_dependent_path(
+    runtime: AwsRuntime,
+    key_id: str,
+    role_arn: str,
+    service_principal: str | None = None,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_key_id = _require_key_id(key_id)
+    required_role_arn = _require_role_arn(role_arn)
+    client = runtime.client("kms", region=resolved_region)
+    warnings: list[str] = []
+    try:
+        response = client.describe_key(KeyId=required_key_id)
+    except (BotoCoreError, ClientError) as exc:
+        raise normalize_aws_error(exc, "kms.DescribeKey") from exc
+
+    metadata = _kms_key_metadata(response.get("KeyMetadata", {}))
+    key_arn = str(metadata.get("arn") or required_key_id)
+    role_checks = _kms_role_permission_checks(
+        runtime=runtime,
+        role_arn=required_role_arn,
+        key_arn=key_arn,
+        warnings=warnings,
+    )
+    service_check = _kms_service_principal_check(
+        client=client,
+        key_id=required_key_id,
+        service_principal=service_principal,
+        warnings=warnings,
+    )
+    return {
+        "region": resolved_region,
+        "key_id": required_key_id,
+        "key": {
+            "arn": metadata.get("arn"),
+            "enabled": metadata.get("enabled"),
+            "key_state": metadata.get("key_state"),
+            "key_usage": metadata.get("key_usage"),
+            "key_manager": metadata.get("key_manager"),
+        },
+        "role_arn": required_role_arn,
+        "role_permission_checks": role_checks,
+        "service_principal_check": service_check,
+        "path_summary": _kms_path_summary(metadata, role_checks, service_check),
+        "warnings": warnings,
+    }
+
+
 def _require_key_id(value: str) -> str:
     normalized = value.strip()
     if not normalized:
         raise ToolInputError("key_id is required")
+    return normalized
+
+
+def _require_role_arn(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ToolInputError("role_arn is required")
+    if not normalized.startswith("arn:") or ":role/" not in normalized:
+        raise ToolInputError("role_arn must be an IAM role ARN")
     return normalized
 
 
@@ -165,4 +224,138 @@ def _kms_inventory_summary(keys: list[dict[str, Any]]) -> dict[str, Any]:
         "key_count": len(keys),
         "by_state": by_state,
         "by_usage": by_usage,
+    }
+
+
+def _kms_role_permission_checks(
+    *,
+    runtime: AwsRuntime,
+    role_arn: str,
+    key_arn: str,
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    iam = runtime.client("iam", region=runtime.region)
+    checks: list[dict[str, Any]] = []
+    for action in ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"]:
+        try:
+            response = iam.simulate_principal_policy(
+                PolicySourceArn=role_arn,
+                ActionNames=[action],
+                ResourceArns=[key_arn],
+            )
+        except (BotoCoreError, ClientError) as exc:
+            warnings.append(str(normalize_aws_error(exc, "iam.SimulatePrincipalPolicy")))
+            checks.append({"action": action, "decision": "unknown", "allowed": None})
+            continue
+        result = (response.get("EvaluationResults") or [{}])[0]
+        decision = str(result.get("EvalDecision") or "unknown")
+        checks.append(
+            {
+                "action": action,
+                "decision": decision,
+                "allowed": decision.lower() == "allowed",
+                "missing_context_values": sorted(result.get("MissingContextValues") or []),
+            }
+        )
+    return checks
+
+
+def _kms_service_principal_check(
+    *,
+    client: Any,
+    key_id: str,
+    service_principal: str | None,
+    warnings: list[str],
+) -> dict[str, Any]:
+    if not service_principal:
+        return {"checked": False, "service_principal": None, "allowed_actions": []}
+    try:
+        response = client.get_key_policy(KeyId=key_id, PolicyName="default")
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "kms.GetKeyPolicy")))
+        return {
+            "checked": True,
+            "service_principal": service_principal,
+            "allowed_actions": [],
+            "policy_readable": False,
+        }
+    policy = _json_object(response.get("Policy"))
+    actions = _kms_allowed_actions_for_service(policy, service_principal)
+    return {
+        "checked": True,
+        "service_principal": service_principal,
+        "policy_readable": True,
+        "allowed_actions": actions,
+        "has_required_data_key_access": "kms:GenerateDataKey" in actions or "kms:*" in actions,
+    }
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _kms_allowed_actions_for_service(
+    policy: dict[str, Any],
+    service_principal: str,
+) -> list[str]:
+    actions: set[str] = set()
+    statements = policy.get("Statement") or []
+    if isinstance(statements, dict):
+        statements = [statements]
+    for statement in statements:
+        if not isinstance(statement, dict) or statement.get("Effect") != "Allow":
+            continue
+        if not _principal_matches(statement.get("Principal"), service_principal):
+            continue
+        for action in _string_list(statement.get("Action")):
+            if action == "kms:*" or action.startswith("kms:"):
+                actions.add(action)
+    return sorted(actions)
+
+
+def _principal_matches(principal: Any, service_principal: str) -> bool:
+    if principal == "*":
+        return True
+    if not isinstance(principal, dict):
+        return False
+    return service_principal in _string_list(principal.get("Service"))
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return []
+
+
+def _kms_path_summary(
+    metadata: dict[str, Any],
+    role_checks: list[dict[str, Any]],
+    service_check: dict[str, Any],
+) -> dict[str, Any]:
+    role_allowed = all(check.get("allowed") is True for check in role_checks)
+    service_ok = (
+        not service_check.get("checked")
+        or bool(service_check.get("has_required_data_key_access"))
+        or "kms:*" in service_check.get("allowed_actions", [])
+    )
+    return {
+        "key_usable": metadata.get("enabled") is True and metadata.get("key_state") == "Enabled",
+        "role_has_required_actions": role_allowed,
+        "service_principal_has_data_key_access": service_ok,
+        "likely_usable": bool(
+            metadata.get("enabled") is True
+            and metadata.get("key_state") == "Enabled"
+            and role_allowed
+            and service_ok
+        ),
     }
