@@ -63,6 +63,9 @@ Related tools:
 - Find recent error-like CloudWatch log events for a Lambda.
 - Combine Lambda config, metrics, grouped logs, aliases, and event source
   mappings into a failure investigation.
+- Audit async Lambda failure paths, including retry age/attempt settings,
+  on-failure destinations, DLQ fallback, reserved concurrency, and recent
+  throttles.
 - Map Lambda dependencies such as execution role, log group, VPC attachment,
   dead-letter target, aliases, event source mappings, and inferred permission
   checks.
@@ -90,6 +93,7 @@ Related tools:
 - `get_lambda_alias_version_summary`
 - `get_lambda_recent_errors`
 - `investigate_lambda_failure`
+- `audit_async_lambda_failure_path`
 - `explain_lambda_dependencies`
 - `explain_lambda_network_access`
 - `check_lambda_permission_path`

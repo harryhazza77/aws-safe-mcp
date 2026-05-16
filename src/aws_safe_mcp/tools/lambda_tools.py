@@ -303,6 +303,32 @@ def investigate_lambda_failure(
     }
 
 
+def audit_async_lambda_failure_path(
+    runtime: AwsRuntime,
+    function_name: str,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_name = require_lambda_name(function_name)
+    summary = get_lambda_summary(runtime, required_name, region=resolved_region)
+    client = runtime.client("lambda", region=resolved_region)
+    async_config, warnings = _lambda_async_invoke_config(client, required_name)
+    concurrency = _lambda_reserved_concurrency(client, required_name, warnings)
+    signals = _async_lambda_failure_signals(summary, async_config, concurrency)
+    return {
+        "function_name": required_name,
+        "region": resolved_region,
+        "diagnostic_summary": _async_lambda_failure_summary(signals),
+        "async_invoke_config": async_config,
+        "dead_letter": summary.get("dead_letter"),
+        "reserved_concurrency": concurrency,
+        "recent_metrics": summary.get("recent_metrics"),
+        "signals": signals,
+        "suggested_next_checks": _async_lambda_failure_next_checks(signals),
+        "warnings": [*_lambda_summary_warnings(summary), *warnings],
+    }
+
+
 def explain_lambda_dependencies(
     runtime: AwsRuntime,
     function_name: str,
@@ -1420,6 +1446,108 @@ def _lambda_resource_policy_summary(client: Any, function_name: str) -> dict[str
         "actions": sorted(actions),
         "warnings": [],
     }
+
+
+def _lambda_async_invoke_config(
+    client: Any,
+    function_name: str,
+) -> tuple[dict[str, Any], list[str]]:
+    try:
+        response = client.get_function_event_invoke_config(FunctionName=function_name)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code in {"ResourceNotFoundException", "EventInvokeConfigNotFoundException"}:
+            return _default_async_invoke_config(), []
+        return _default_async_invoke_config(), [
+            str(normalize_aws_error(exc, "lambda.GetFunctionEventInvokeConfig"))
+        ]
+    except BotoCoreError as exc:
+        return _default_async_invoke_config(), [
+            str(normalize_aws_error(exc, "lambda.GetFunctionEventInvokeConfig"))
+        ]
+    return {
+        "available": True,
+        "maximum_retry_attempts": response.get("MaximumRetryAttempts"),
+        "maximum_event_age_seconds": response.get("MaximumEventAgeInSeconds"),
+        "on_success_arn": ((response.get("DestinationConfig") or {}).get("OnSuccess") or {}).get(
+            "Destination"
+        ),
+        "on_failure_arn": ((response.get("DestinationConfig") or {}).get("OnFailure") or {}).get(
+            "Destination"
+        ),
+    }, []
+
+
+def _default_async_invoke_config() -> dict[str, Any]:
+    return {
+        "available": False,
+        "maximum_retry_attempts": 2,
+        "maximum_event_age_seconds": 21600,
+        "on_success_arn": None,
+        "on_failure_arn": None,
+    }
+
+
+def _lambda_reserved_concurrency(
+    client: Any,
+    function_name: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    try:
+        response = client.get_function_concurrency(FunctionName=function_name)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code in {"ResourceNotFoundException", "ResourceConflictException"}:
+            return {"configured": False, "reserved_concurrent_executions": None}
+        warnings.append(str(normalize_aws_error(exc, "lambda.GetFunctionConcurrency")))
+        return {"configured": False, "reserved_concurrent_executions": None}
+    except BotoCoreError as exc:
+        warnings.append(str(normalize_aws_error(exc, "lambda.GetFunctionConcurrency")))
+        return {"configured": False, "reserved_concurrent_executions": None}
+    value = response.get("ReservedConcurrentExecutions")
+    return {"configured": value is not None, "reserved_concurrent_executions": value}
+
+
+def _async_lambda_failure_signals(
+    summary: dict[str, Any],
+    async_config: dict[str, Any],
+    concurrency: dict[str, Any],
+) -> dict[str, Any]:
+    recent_metrics = summary.get("recent_metrics") or {}
+    throttles = _metric_value(recent_metrics, "throttles")
+    dead_letter = summary.get("dead_letter") or {}
+    return {
+        "retry_attempts": async_config.get("maximum_retry_attempts"),
+        "max_event_age_seconds": async_config.get("maximum_event_age_seconds"),
+        "failure_destination_configured": bool(async_config.get("on_failure_arn")),
+        "dead_letter_configured": bool(dead_letter.get("configured")),
+        "reserved_concurrency_zero": concurrency.get("reserved_concurrent_executions") == 0,
+        "throttles_last_hour": throttles,
+    }
+
+
+def _async_lambda_failure_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    risks = []
+    if not signals["failure_destination_configured"] and not signals["dead_letter_configured"]:
+        risks.append("no_failure_destination_or_dlq")
+    if signals["reserved_concurrency_zero"]:
+        risks.append("reserved_concurrency_zero")
+    if signals["throttles_last_hour"] > 0:
+        risks.append("recent_throttles")
+    return {"status": "needs_attention" if risks else "covered", "risks": risks}
+
+
+def _async_lambda_failure_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if not signals["failure_destination_configured"] and not signals["dead_letter_configured"]:
+        checks.append("Configure async on-failure destination or Lambda DLQ.")
+    if signals["reserved_concurrency_zero"]:
+        checks.append("Increase reserved concurrency above zero before async invokes arrive.")
+    if signals["throttles_last_hour"] > 0:
+        checks.append("Inspect throttles and async event age for delayed retries.")
+    if not checks:
+        checks.append("Async failure path has a configured destination or DLQ.")
+    return checks
 
 
 def _empty_lambda_policy_summary() -> dict[str, Any]:

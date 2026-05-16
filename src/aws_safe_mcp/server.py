@@ -57,6 +57,9 @@ from aws_safe_mcp.tools.identity import aws_identity as get_aws_identity
 from aws_safe_mcp.tools.kms import get_kms_key_summary as get_kms_key_summary_tool
 from aws_safe_mcp.tools.kms import list_kms_keys as list_kms_keys_tool
 from aws_safe_mcp.tools.lambda_tools import (
+    audit_async_lambda_failure_path as audit_async_lambda_failure_path_tool,
+)
+from aws_safe_mcp.tools.lambda_tools import (
     check_lambda_permission_path as check_lambda_permission_path_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
@@ -297,6 +300,19 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
             runtime,
             function_name=function_name,
             since_minutes=since_minutes,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("audit_async_lambda_failure_path")
+    def audit_async_lambda_failure_path(
+        function_name: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Audit async Lambda retry, destination, DLQ, throttle, and concurrency posture."""
+        return audit_async_lambda_failure_path_tool(
+            runtime,
+            function_name=function_name,
             region=region,
         )
 

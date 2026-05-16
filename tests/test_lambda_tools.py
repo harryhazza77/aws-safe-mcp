@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.lambda_tools import (
+    audit_async_lambda_failure_path,
     check_lambda_permission_path,
     check_lambda_to_sqs_sendability,
     explain_lambda_dependencies,
@@ -182,6 +183,18 @@ class FakeLambdaClient:
                 }
             )
         }
+
+    def get_function_event_invoke_config(self, **_: Any) -> dict[str, Any]:
+        return {
+            "MaximumRetryAttempts": 1,
+            "MaximumEventAgeInSeconds": 3600,
+            "DestinationConfig": {
+                "OnFailure": {"Destination": "arn:aws:sqs:eu-west-2:123456789012:async-dlq"}
+            },
+        }
+
+    def get_function_concurrency(self, **_: Any) -> dict[str, Any]:
+        return {"ReservedConcurrentExecutions": 5}
 
     def list_event_source_mappings(self, **_: Any) -> dict[str, Any]:
         return {
@@ -549,6 +562,29 @@ def test_get_lambda_summary_reports_metric_data_warnings() -> None:
 
     assert result["recent_metrics"]["available"] is True
     assert result["recent_metrics"]["warnings"] == ["Metric errors returned status PartialData"]
+
+
+def test_audit_async_lambda_failure_path_reports_destination_and_concurrency() -> None:
+    result = audit_async_lambda_failure_path(FakeRuntime(), "dev-api")
+
+    assert result["async_invoke_config"]["maximum_retry_attempts"] == 1
+    assert result["async_invoke_config"]["on_failure_arn"] == (
+        "arn:aws:sqs:eu-west-2:123456789012:async-dlq"
+    )
+    assert result["reserved_concurrency"]["reserved_concurrent_executions"] == 5
+    assert result["signals"]["failure_destination_configured"] is True
+    assert result["diagnostic_summary"] == {"status": "covered", "risks": []}
+
+
+def test_audit_async_lambda_failure_path_uses_dlq_as_fallback() -> None:
+    runtime = FakeRuntime()
+    runtime.lambda_client = MissingAsyncDestinationLambdaClient()
+
+    result = audit_async_lambda_failure_path(runtime, "dev-api")
+
+    assert result["diagnostic_summary"] == {"status": "covered", "risks": []}
+    assert result["signals"]["failure_destination_configured"] is False
+    assert result["signals"]["dead_letter_configured"] is True
 
 
 def test_get_lambda_alias_version_summary_reports_safe_traffic_metadata() -> None:
@@ -1050,6 +1086,15 @@ class FailingConfigurationLambdaClient(FakeLambdaClient):
             },
             "GetFunctionConfiguration",
         )
+
+
+class MissingAsyncDestinationLambdaClient(FakeLambdaClient):
+    def get_function_event_invoke_config(self, **_: Any) -> dict[str, Any]:
+        return {
+            "MaximumRetryAttempts": 2,
+            "MaximumEventAgeInSeconds": 21600,
+            "DestinationConfig": {},
+        }
 
 
 class FailingAliasVersionLambdaClient(FakeLambdaClient):

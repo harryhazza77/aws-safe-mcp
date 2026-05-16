@@ -150,6 +150,18 @@ Inputs:
 - `since_minutes` optional, default `60`
 - `region` optional
 
+### `audit_async_lambda_failure_path`
+
+Audits where asynchronously invoked Lambda events go when invocation fails. The
+tool summarizes async retry settings, maximum event age, on-failure/on-success
+destinations, Lambda DLQ fallback, reserved concurrency, recent throttle
+metrics, and suggested next checks.
+
+Inputs:
+
+- `function_name` required
+- `region` optional
+
 ### `explain_lambda_dependencies`
 
 Maps one Lambda into a compact dependency graph. It combines configuration,
