@@ -196,6 +196,19 @@ Inputs:
 - `resource_arn` required
 - `region` optional
 
+### `check_lambda_to_sqs_sendability`
+
+Checks whether one Lambda appears able to send messages to one SQS queue. The
+tool combines Lambda execution-role IAM simulation, queue policy inspection,
+region/account comparison, FIFO hints, and KMS encryption hints. It does not
+send messages or read queue messages.
+
+Inputs:
+
+- `function_name` required
+- `queue_url` required
+- `region` optional
+
 ## Step Functions
 
 ### `list_step_functions`

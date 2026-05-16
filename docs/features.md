@@ -78,6 +78,9 @@ Related tools:
 - Trace inferred Lambda network reachability from static VPC configuration.
 - Check whether a Lambda execution role appears allowed to perform a specific
   IAM action on a specific resource ARN.
+- Check whether one Lambda appears able to send messages to one SQS queue,
+  including execution-role IAM, queue policy, region/account, FIFO, and KMS
+  hints.
 
 Related tools:
 
@@ -90,6 +93,7 @@ Related tools:
 - `explain_lambda_dependencies`
 - `explain_lambda_network_access`
 - `check_lambda_permission_path`
+- `check_lambda_to_sqs_sendability`
 
 ## Step Functions Investigation
 

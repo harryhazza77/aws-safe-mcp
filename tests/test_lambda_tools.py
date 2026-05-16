@@ -11,6 +11,7 @@ from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.lambda_tools import (
     check_lambda_permission_path,
+    check_lambda_to_sqs_sendability,
     explain_lambda_dependencies,
     explain_lambda_network_access,
     get_lambda_alias_version_summary,
@@ -403,6 +404,30 @@ class FakeEc2Client:
         return {"VpcEndpoints": self.endpoints}
 
 
+class FakeSqsClient:
+    def get_queue_attributes(self, **_: Any) -> dict[str, Any]:
+        return {
+            "Attributes": {
+                "QueueArn": "arn:aws:sqs:eu-west-2:123456789012:dev-queue",
+                "Policy": json.dumps(
+                    {
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Principal": {
+                                    "AWS": "arn:aws:iam::123456789012:role/dev-lambda"
+                                },
+                                "Action": "sqs:SendMessage",
+                                "Resource": "arn:aws:sqs:eu-west-2:123456789012:dev-queue",
+                            }
+                        ]
+                    }
+                ),
+                "SqsManagedSseEnabled": "true",
+            }
+        }
+
+
 class FakeRuntime:
     def __init__(self) -> None:
         self.config = AwsSafeConfig(
@@ -417,6 +442,7 @@ class FakeRuntime:
         self.logs_client = FakeLogsClient()
         self.iam_client = FakeIamClient()
         self.ec2_client = FakeEc2Client()
+        self.sqs_client = FakeSqsClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
         assert region == "eu-west-2"
@@ -430,6 +456,8 @@ class FakeRuntime:
             return self.iam_client
         if service_name == "ec2":
             return self.ec2_client
+        if service_name == "sqs":
+            return self.sqs_client
         raise AssertionError(f"Unexpected service {service_name}")
 
 
@@ -940,6 +968,42 @@ def test_check_lambda_permission_path_validates_inputs() -> None:
             "dynamodb:PutItem",
             "dev-table",
         )
+
+
+def test_check_lambda_to_sqs_sendability_reports_likely_sendable_path() -> None:
+    result = check_lambda_to_sqs_sendability(
+        FakeRuntime(),
+        "dev-api",
+        "https://sqs.eu-west-2.amazonaws.com/123456789012/dev-queue",
+    )
+
+    assert result["diagnostic_summary"]["status"] == "likely_sendable"
+    assert result["signals"]["identity_allows_send_message"] is True
+    assert result["signals"]["queue_policy_allows_role"] is True
+    assert result["signals"]["region_matches"] is True
+    assert result["signals"]["account_matches"] is True
+    assert result["queue"]["policy"] == {"available": True, "statement_count": 1}
+    assert result["identity_permission_check"]["action"] == "sqs:SendMessage"
+
+
+def test_check_lambda_to_sqs_sendability_reports_identity_denial() -> None:
+    runtime = FakeRuntime()
+    runtime.iam_client.simulation_decision = "implicitDeny"
+
+    result = check_lambda_to_sqs_sendability(
+        runtime,
+        "dev-api",
+        "https://sqs.eu-west-2.amazonaws.com/123456789012/dev-queue",
+    )
+
+    assert result["diagnostic_summary"]["status"] == "blocked"
+    assert "identity_policy_denies_send_message" in result["diagnostic_summary"]["blockers"]
+    assert result["signals"]["identity_allows_send_message"] is False
+
+
+def test_check_lambda_to_sqs_sendability_validates_queue_url() -> None:
+    with pytest.raises(ToolInputError, match="queue_url must start"):
+        check_lambda_to_sqs_sendability(FakeRuntime(), "dev-api", "dev-queue")
 
 
 class QuietCloudWatchClient:

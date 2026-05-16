@@ -496,6 +496,67 @@ def check_lambda_permission_path(
     )
 
 
+def check_lambda_to_sqs_sendability(
+    runtime: AwsRuntime,
+    function_name: str,
+    queue_url: str,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_name = require_lambda_name(function_name)
+    required_queue_url = _require_queue_url(queue_url)
+    summary = get_lambda_summary(runtime, required_name, region=resolved_region)
+    role_arn = str(summary.get("role_arn") or "")
+    role_name = _role_name_from_arn(role_arn)
+    warnings: list[str] = _lambda_summary_warnings(summary)
+    queue = _sqs_queue_context(runtime, required_queue_url, resolved_region, warnings)
+    queue_arn = str(queue.get("queue_arn") or "")
+    identity_check = (
+        _simulate_lambda_role_permission(
+            runtime=runtime,
+            function_name=required_name,
+            region=resolved_region,
+            role_arn=role_arn,
+            action="sqs:SendMessage",
+            resource=queue_arn,
+            warnings=warnings,
+        )
+        if role_name and queue_arn
+        else _permission_path_unknown_result(
+            function_name=required_name,
+            region=resolved_region,
+            action="sqs:SendMessage",
+            resource_arn=queue_arn or required_queue_url,
+            role_arn=role_arn or None,
+            warnings=[*warnings, "Lambda role or queue ARN was unavailable."],
+        )
+    )
+    queue_policy_check = _lambda_sqs_queue_policy_check(queue, role_arn)
+    signals = _lambda_sqs_sendability_signals(
+        summary=summary,
+        queue=queue,
+        identity_check=identity_check,
+        queue_policy_check=queue_policy_check,
+        region=resolved_region,
+    )
+    return {
+        "function_name": required_name,
+        "queue_url": required_queue_url,
+        "region": resolved_region,
+        "lambda": {
+            "function_arn": summary.get("function_arn"),
+            "role_arn": role_arn or None,
+        },
+        "queue": queue,
+        "identity_permission_check": identity_check,
+        "queue_policy_check": queue_policy_check,
+        "signals": signals,
+        "diagnostic_summary": _lambda_sqs_sendability_summary(signals),
+        "suggested_next_checks": _lambda_sqs_sendability_next_checks(signals),
+        "warnings": warnings,
+    }
+
+
 def _lambda_list_item(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "function_name": item.get("FunctionName"),
@@ -1774,6 +1835,212 @@ def _require_arn(value: str, label: str) -> str:
     if not normalized.startswith("arn:"):
         raise ToolInputError(f"{label} must be an AWS ARN")
     return normalized
+
+
+def _require_queue_url(queue_url: str) -> str:
+    normalized = queue_url.strip()
+    if not normalized:
+        raise ToolInputError("queue_url is required")
+    if not normalized.startswith(("http://", "https://")):
+        raise ToolInputError("queue_url must start with http:// or https://")
+    return normalized
+
+
+def _sqs_queue_context(
+    runtime: AwsRuntime,
+    queue_url: str,
+    region: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    sqs = runtime.client("sqs", region=region)
+    try:
+        response = sqs.get_queue_attributes(QueueUrl=queue_url, AttributeNames=["All"])
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "sqs.GetQueueAttributes")))
+        return {
+            "available": False,
+            "queue_url": queue_url,
+            "queue_name": queue_url.rstrip("/").rsplit("/", 1)[-1],
+        }
+    attributes = response.get("Attributes", {})
+    queue_arn = str(attributes.get("QueueArn") or "")
+    return {
+        "available": True,
+        "queue_url": queue_url,
+        "queue_name": queue_url.rstrip("/").rsplit("/", 1)[-1],
+        "queue_arn": queue_arn or None,
+        "fifo": queue_url.endswith(".fifo") or queue_arn.endswith(".fifo"),
+        "region": _arn_region(queue_arn),
+        "account_id": _arn_account(queue_arn),
+        "encryption": {
+            "kms_master_key_id": attributes.get("KmsMasterKeyId") or None,
+            "sqs_managed_sse": _optional_bool(attributes.get("SqsManagedSseEnabled")),
+        },
+        "policy": {
+            "available": bool(attributes.get("Policy")),
+            "statement_count": _policy_statement_count(attributes.get("Policy")),
+        },
+        "policy_document": _parse_policy_document(attributes.get("Policy")),
+    }
+
+
+def _lambda_sqs_queue_policy_check(queue: dict[str, Any], role_arn: str) -> dict[str, Any]:
+    policy = queue.get("policy_document")
+    queue_arn = str(queue.get("queue_arn") or "")
+    if not isinstance(policy, dict) or not policy:
+        return {
+            "enabled": True,
+            "source": "queue_policy",
+            "decision": "not_present",
+            "allows_lambda_role": None,
+            "reason": "Queue policy is not present; same-account IAM may still allow SendMessage.",
+        }
+    decision = _resource_policy_decision(policy, role_arn, "sqs:SendMessage", queue_arn)
+    return {
+        "enabled": True,
+        "source": "queue_policy",
+        "decision": decision,
+        "allows_lambda_role": decision == "allowed",
+        "reason": "Queue policy was checked for Lambda execution role SendMessage access.",
+    }
+
+
+def _lambda_sqs_sendability_signals(
+    *,
+    summary: dict[str, Any],
+    queue: dict[str, Any],
+    identity_check: dict[str, Any],
+    queue_policy_check: dict[str, Any],
+    region: str,
+) -> dict[str, Any]:
+    lambda_arn = str(summary.get("function_arn") or "")
+    return {
+        "identity_allows_send_message": identity_check.get("allowed"),
+        "queue_policy_allows_role": queue_policy_check.get("allows_lambda_role"),
+        "queue_policy_decision": queue_policy_check.get("decision"),
+        "region_matches": not queue.get("region") or queue.get("region") == region,
+        "account_matches": not _arn_account(lambda_arn)
+        or not queue.get("account_id")
+        or _arn_account(lambda_arn) == queue.get("account_id"),
+        "fifo_queue": bool(queue.get("fifo")),
+        "kms_key_configured": bool((queue.get("encryption") or {}).get("kms_master_key_id")),
+        "queue_available": bool(queue.get("available")),
+    }
+
+
+def _lambda_sqs_sendability_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    blockers = []
+    if signals.get("queue_available") is False:
+        blockers.append("queue_unavailable")
+    if signals.get("identity_allows_send_message") is False:
+        blockers.append("identity_policy_denies_send_message")
+    if signals.get("queue_policy_decision") in {"denied", "explicit_deny"}:
+        blockers.append("queue_policy_does_not_allow_lambda_role")
+    if signals.get("region_matches") is False:
+        blockers.append("region_mismatch")
+    if signals.get("account_matches") is False:
+        blockers.append("account_mismatch")
+    return {
+        "status": "blocked" if blockers else "likely_sendable",
+        "blockers": blockers,
+        "caution_count": sum(1 for key in ["fifo_queue", "kms_key_configured"] if signals.get(key)),
+    }
+
+
+def _lambda_sqs_sendability_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if signals.get("identity_allows_send_message") is not True:
+        checks.append("Confirm Lambda execution role allows sqs:SendMessage on the queue ARN.")
+    if signals.get("queue_policy_decision") in {"denied", "explicit_deny", "unknown"}:
+        checks.append("Inspect the queue resource policy for the Lambda execution role.")
+    if signals.get("kms_key_configured"):
+        checks.append("Check KMS key policy and role permissions for encrypted queue sends.")
+    if signals.get("fifo_queue"):
+        checks.append("Confirm function code supplies MessageGroupId for FIFO sends.")
+    if not checks:
+        checks.append("No obvious static blocker found for Lambda to send SQS messages.")
+    return checks
+
+
+def _resource_policy_decision(
+    policy: dict[str, Any],
+    principal_arn: str,
+    action: str,
+    resource_arn: str,
+) -> str:
+    statements = policy.get("Statement", [])
+    if isinstance(statements, dict):
+        statements = [statements]
+    decision = "unknown"
+    for statement in statements if isinstance(statements, list) else []:
+        if not isinstance(statement, dict):
+            continue
+        if not _policy_principal_matches(statement.get("Principal"), principal_arn):
+            continue
+        if not _policy_action_matches(statement.get("Action"), action):
+            continue
+        if not _policy_resource_matches(statement.get("Resource"), resource_arn):
+            continue
+        if statement.get("Effect") == "Deny":
+            return "explicit_deny"
+        if statement.get("Effect") == "Allow":
+            decision = "allowed"
+    return decision
+
+
+def _policy_statement_count(raw_policy: Any) -> int:
+    policy = _parse_policy_document(raw_policy)
+    statements = policy.get("Statement", []) if isinstance(policy, dict) else []
+    if isinstance(statements, dict):
+        return 1
+    return len(statements) if isinstance(statements, list) else 0
+
+
+def _policy_principal_matches(principal: Any, principal_arn: str) -> bool:
+    if principal == "*":
+        return True
+    if not isinstance(principal, dict):
+        return False
+    aws_principal = principal.get("AWS")
+    if isinstance(aws_principal, str):
+        return aws_principal in {principal_arn, "*"}
+    if isinstance(aws_principal, list):
+        return principal_arn in aws_principal or "*" in aws_principal
+    return False
+
+
+def _policy_action_matches(actions: Any, action: str) -> bool:
+    if isinstance(actions, str):
+        return actions in {action, "sqs:*", "*"}
+    if isinstance(actions, list):
+        return action in actions or "sqs:*" in actions or "*" in actions
+    return False
+
+
+def _policy_resource_matches(resources: Any, resource_arn: str) -> bool:
+    if not resources:
+        return True
+    if isinstance(resources, str):
+        return resources in {resource_arn, "*"}
+    if isinstance(resources, list):
+        return resource_arn in resources or "*" in resources
+    return False
+
+
+def _arn_region(value: str) -> str | None:
+    parts = value.split(":")
+    return parts[3] if len(parts) >= 6 and parts[0] == "arn" else None
+
+
+def _arn_account(value: str) -> str | None:
+    parts = value.split(":")
+    return parts[4] if len(parts) >= 6 and parts[0] == "arn" else None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    return str(value).lower() == "true"
 
 
 def _permission_path_unknown_result(

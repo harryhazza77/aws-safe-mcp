@@ -60,6 +60,9 @@ from aws_safe_mcp.tools.lambda_tools import (
     check_lambda_permission_path as check_lambda_permission_path_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
+    check_lambda_to_sqs_sendability as check_lambda_to_sqs_sendability_tool,
+)
+from aws_safe_mcp.tools.lambda_tools import (
     explain_lambda_dependencies as explain_lambda_dependencies_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
@@ -338,6 +341,21 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
             function_name=function_name,
             action=action,
             resource_arn=resource_arn,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("check_lambda_to_sqs_sendability")
+    def check_lambda_to_sqs_sendability(
+        function_name: str,
+        queue_url: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Check whether one Lambda appears able to send messages to one SQS queue."""
+        return check_lambda_to_sqs_sendability_tool(
+            runtime,
+            function_name=function_name,
+            queue_url=queue_url,
             region=region,
         )
 
