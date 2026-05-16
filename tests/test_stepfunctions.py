@@ -11,6 +11,7 @@ from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.stepfunctions import (
     _step_function_permission_hints,
+    audit_step_function_retry_catch_safety,
     explain_step_function_dependencies,
     get_step_function_execution_summary,
     investigate_step_function_failure,
@@ -80,6 +81,20 @@ class FakeStepFunctionsClient:
                             "Resource": (
                                 "arn:aws:lambda:eu-west-2:123456789012:function:dev-worker"
                             ),
+                            "Retry": [
+                                {
+                                    "ErrorEquals": ["Lambda.ServiceException"],
+                                    "IntervalSeconds": 2,
+                                    "MaxAttempts": 3,
+                                    "BackoffRate": 2,
+                                }
+                            ],
+                            "Catch": [
+                                {
+                                    "ErrorEquals": ["States.ALL"],
+                                    "Next": "Notify",
+                                }
+                            ],
                             "Next": "ShouldNotify",
                         },
                         "ShouldNotify": {
@@ -106,6 +121,48 @@ class FakeStepFunctionsClient:
                                 "Message.$": "$.message",
                             },
                             "Next": "Done",
+                        },
+                        "SendQueueMessage": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::sqs:sendMessage",
+                            "Parameters": {
+                                "QueueUrl": (
+                                    "https://sqs.eu-west-2.amazonaws.com/"
+                                    "123456789012/dev-queue"
+                                ),
+                                "MessageBody.$": "$.message",
+                            },
+                            "End": True,
+                        },
+                        "PutEvent": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::events:putEvents",
+                            "Parameters": {
+                                "EventBusName": (
+                                    "arn:aws:events:eu-west-2:123456789012:event-bus/dev-bus"
+                                ),
+                                "Entries.$": "$.entries",
+                            },
+                            "End": True,
+                        },
+                        "PutItem": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::dynamodb:putItem",
+                            "Parameters": {
+                                "TableName": "dev-table",
+                            },
+                            "End": True,
+                        },
+                        "StartChild": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::states:startExecution",
+                            "Parameters": {
+                                "StateMachineArn": (
+                                    "arn:aws:states:eu-west-2:123456789012:"
+                                    "stateMachine:child-flow"
+                                ),
+                            },
+                            "End": True,
                         },
                         "Done": {
                             "Type": "Succeed",
@@ -305,13 +362,26 @@ def test_explain_step_function_dependencies_maps_tasks_and_permissions() -> None
     assert result["arn"] == "arn:aws:states:eu-west-2:123456789012:stateMachine:dev-order-flow"
     assert result["state_machine_name"] == "dev-order-flow"
     assert result["nodes"]["execution_role"]["role_name"] == "dev-sfn-role"
-    assert result["summary"]["state_count"] == 5
-    assert result["summary"]["task_state_count"] == 2
-    assert {edge["target_type"] for edge in result["edges"]} == {"lambda", "sns"}
+    assert result["summary"]["state_count"] == 9
+    assert result["summary"]["task_state_count"] == 6
+    assert {edge["target_type"] for edge in result["edges"]} == {
+        "dynamodb",
+        "events",
+        "lambda",
+        "sns",
+        "sqs",
+        "states",
+    }
     assert result["flow_summary"]["start_at"] == "CallWorker"
     assert result["flow_summary"]["choice_states"] == ["ShouldNotify"]
     assert result["flow_summary"]["wait_states"] == ["WaitBeforeNotify"]
-    assert result["flow_summary"]["terminal_states"] == ["Done"]
+    assert set(result["flow_summary"]["terminal_states"]) == {
+        "Done",
+        "PutEvent",
+        "PutItem",
+        "SendQueueMessage",
+        "StartChild",
+    }
     assert [
         "CallWorker",
         "ShouldNotify",
@@ -320,7 +390,7 @@ def test_explain_step_function_dependencies_maps_tasks_and_permissions() -> None
         "Done",
     ] in result["flow_summary"]["linear_paths"]
     assert ["CallWorker", "ShouldNotify", "Done"] in result["flow_summary"]["linear_paths"]
-    assert len(result["permission_hints"]) == 2
+    assert len(result["permission_hints"]) == 6
     lambda_hint = next(
         hint for hint in result["permission_hints"] if hint["integration"] == "lambda"
     )
@@ -329,13 +399,63 @@ def test_explain_step_function_dependencies_maps_tasks_and_permissions() -> None
     checked_actions = {check["action"] for check in result["permission_checks"]["checks"]}
     assert "lambda:InvokeFunction" in checked_actions
     assert "sns:Publish" in checked_actions
-    assert result["permission_checks"]["summary"]["allowed"] == 2
+    assert "sqs:SendMessage" in checked_actions
+    assert "events:PutEvents" in checked_actions
+    assert "dynamodb:PutItem" in checked_actions
+    assert "states:StartExecution" in checked_actions
+    checked_resources = {check["resource_arn"] for check in result["permission_checks"]["checks"]}
+    assert "arn:aws:sqs:eu-west-2:123456789012:dev-queue" in checked_resources
+    assert "arn:aws:dynamodb:eu-west-2:123456789012:table/dev-table" in checked_resources
+    assert result["permission_checks"]["summary"]["allowed"] == 8
+    assert result["task_permission_proof"]["status"] == "ready"
+    assert result["task_permission_proof"]["task_count"] == 6
+    call_worker_proof = next(
+        item
+        for item in result["task_permission_proof"]["tasks"]
+        if item["state_name"] == "CallWorker"
+    )
+    assert call_worker_proof["permission_status"] == "allowed"
+    assert call_worker_proof["checked_actions"] == ["lambda:InvokeFunction"]
     assert result["graph_summary"]["edge_count"] == len(result["edges"])
     assert (
         result["graph_summary"]["permission_check_count"]
         == result["permission_checks"]["checked_count"]
     )
     assert result["warnings"] == []
+
+
+def test_audit_step_function_retry_catch_safety_flags_uncovered_tasks() -> None:
+    result = audit_step_function_retry_catch_safety(
+        FakeRuntime(),
+        "arn:aws:states:eu-west-2:123456789012:stateMachine:dev-order-flow",
+    )
+
+    assert result["summary"] == {
+        "status": "retry_catch_gaps",
+        "task_count": 6,
+        "risk_count": 15,
+        "risks": [
+            "external_integration_without_catch",
+            "task_without_catch",
+            "task_without_retry",
+        ],
+    }
+    assert result["signals"]["tasks_without_retry"] == [
+        "Notify",
+        "SendQueueMessage",
+        "PutEvent",
+        "PutItem",
+        "StartChild",
+    ]
+    assert result["signals"]["external_integrations_without_catch"] == [
+        "Notify",
+        "SendQueueMessage",
+        "PutEvent",
+        "PutItem",
+        "StartChild",
+    ]
+    assert result["task_audits"][0]["retry_count"] == 1
+    assert "definition" not in result
 
 
 def test_explain_step_function_dependencies_can_skip_permission_checks() -> None:
@@ -392,6 +512,35 @@ def test_investigate_step_function_failure_reports_task_failure() -> None:
     assert result["signals"]["lambda_or_task_failure"] is True
     assert result["signals"]["service_exception"] is True
     assert result["warnings"] == []
+    assert result["failed_state_path"] == ["CallWorker"]
+    assert result["previous_event_context"] == {
+        "event_id": 6,
+        "previous_event_id": 5,
+        "timestamp": "2026-01-01T12:00:55+00:00",
+        "type": "TaskStateEntered",
+        "state_name": "CallWorker",
+    }
+    assert result["failed_state_definition"] == {
+        "name": "CallWorker",
+        "type": "Task",
+        "resource": "arn:aws:lambda:eu-west-2:123456789012:function:dev-worker",
+        "integration": "lambda",
+        "target_arn": "arn:aws:lambda:eu-west-2:123456789012:function:dev-worker",
+        "next": "ShouldNotify",
+        "end": False,
+        "timeout_seconds": None,
+        "heartbeat_seconds": None,
+    }
+    assert result["downstream_target"] == {
+        "target": "arn:aws:lambda:eu-west-2:123456789012:function:dev-worker",
+        "target_type": "lambda",
+        "relationship": "invokes_task",
+        "resource": "arn:aws:lambda:eu-west-2:123456789012:function:dev-worker",
+    }
+    assert result["retry_catch"]["has_retry"] is True
+    assert result["retry_catch"]["has_catch"] is True
+    assert result["retry_catch"]["retry"][0]["error_equals"] == ["Lambda.ServiceException"]
+    assert result["retry_catch"]["catch"][0]["next"] == "Notify"
     assert any("Lambda logs" in check for check in result["suggested_next_checks"])
 
 

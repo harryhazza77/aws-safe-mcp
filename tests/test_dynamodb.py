@@ -8,7 +8,11 @@ from botocore.exceptions import ClientError
 
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
-from aws_safe_mcp.tools.dynamodb import dynamodb_table_summary, list_dynamodb_tables
+from aws_safe_mcp.tools.dynamodb import (
+    check_dynamodb_stream_lambda_readiness,
+    dynamodb_table_summary,
+    list_dynamodb_tables,
+)
 
 
 class FakeDynamoDbClient:
@@ -72,11 +76,52 @@ class FakeRuntime:
         )
         self.region = "eu-west-2"
         self.client_obj = FakeDynamoDbClient()
+        self.lambda_client = FakeLambdaClient()
+        self.iam_client = FakeIamClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
-        assert service_name == "dynamodb"
+        if service_name == "iam":
+            assert region == "eu-west-2"
+            return self.iam_client
         assert region == "eu-west-2"
-        return self.client_obj
+        if service_name == "dynamodb":
+            return self.client_obj
+        if service_name == "lambda":
+            return self.lambda_client
+        raise AssertionError(service_name)
+
+
+class FakeLambdaClient:
+    def list_event_source_mappings(self, **_: Any) -> dict[str, Any]:
+        return {
+            "EventSourceMappings": [
+                {
+                    "UUID": "mapping-1",
+                    "State": "Enabled",
+                    "FunctionArn": "arn:aws:lambda:eu-west-2:123456789012:function:dev-worker",
+                    "BatchSize": 100,
+                    "MaximumBatchingWindowInSeconds": 5,
+                    "BisectBatchOnFunctionError": True,
+                    "FunctionResponseTypes": ["ReportBatchItemFailures"],
+                    "StartingPosition": "LATEST",
+                    "MaximumRetryAttempts": 3,
+                    "MaximumRecordAgeInSeconds": 3600,
+                    "DestinationConfig": {
+                        "OnFailure": {
+                            "Destination": "arn:aws:sqs:eu-west-2:123456789012:stream-dlq"
+                        }
+                    },
+                }
+            ]
+        }
+
+    def get_function_configuration(self, **_: Any) -> dict[str, Any]:
+        return {"Role": "arn:aws:iam::123456789012:role/dev-worker"}
+
+
+class FakeIamClient:
+    def simulate_principal_policy(self, **_: Any) -> dict[str, Any]:
+        return {"EvaluationResults": [{"EvalDecision": "allowed"}]}
 
 
 def test_dynamodb_table_summary_returns_metadata_without_scan() -> None:
@@ -103,6 +148,21 @@ def test_list_dynamodb_tables_returns_names() -> None:
     assert result["tables"] == ["dev-orders", "dev-users"]
     assert result["count"] == 2
     assert runtime.client_obj.last_request == {"Limit": 2}
+
+
+def test_check_dynamodb_stream_lambda_readiness_reports_ready_mapping() -> None:
+    result = check_dynamodb_stream_lambda_readiness(FakeRuntime(), "dev-orders")
+
+    assert result["summary"] == {
+        "status": "ready",
+        "mapping_count": 1,
+        "risk_count": 0,
+        "risks": [],
+    }
+    assert result["stream"]["enabled"] is True
+    assert result["lambda_mappings"][0]["starting_position"] == "LATEST"
+    assert result["lambda_mappings"][0]["bisect_batch_on_function_error"] is True
+    assert result["permission_checks"]["summary"] == {"allowed": 4, "denied": 0, "unknown": 0}
 
 
 def test_dynamodb_table_summary_rejects_blank_table_name() -> None:

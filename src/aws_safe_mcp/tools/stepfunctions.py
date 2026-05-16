@@ -105,6 +105,11 @@ def investigate_step_function_failure(
     )
     failed_state = summary.get("failed_state")
     signals = _step_function_failure_signals(failed_state)
+    definition_context, warnings = _step_function_failure_definition_context(
+        runtime,
+        execution_arn,
+        summary,
+    )
 
     return {
         "execution_arn": execution_arn,
@@ -113,8 +118,17 @@ def investigate_step_function_failure(
         "region": summary.get("region"),
         "status": summary.get("status"),
         "diagnostic_summary": _step_function_diagnostic_summary(summary, signals),
-        "warnings": [],
+        "warnings": warnings,
         "failed_state": failed_state,
+        "failed_state_definition": definition_context.get("failed_state_definition"),
+        "failed_state_path": definition_context.get("failed_state_path"),
+        "previous_event_context": (
+            failed_state.get("previous_event_context")
+            if isinstance(failed_state, dict)
+            else None
+        ),
+        "downstream_target": definition_context.get("downstream_target"),
+        "retry_catch": definition_context.get("retry_catch"),
         "signals": signals,
         "suggested_next_checks": _step_function_suggested_next_checks(signals),
     }
@@ -149,7 +163,7 @@ def explain_step_function_dependencies(
         runtime.config.redaction.max_string_length,
     )
     role_arn = str(state_machine.get("roleArn") or "")
-    states = _asl_states(definition)
+    states = _asl_states(definition, state_machine_arn)
     edges = _step_function_dependency_edges(state_machine_arn, states)
     role = _step_function_iam_role_summary(runtime, role_arn)
     permission_hints = _step_function_permission_hints(edges, role_arn)
@@ -187,6 +201,10 @@ def explain_step_function_dependencies(
             "start_at": definition.get("StartAt") if isinstance(definition, dict) else None,
         },
         "flow_summary": _step_function_flow_summary(definition, states, edges),
+        "task_permission_proof": _step_function_task_permission_proof(
+            states,
+            permission_checks,
+        ),
         "graph_summary": dependency_graph_summary(
             nodes=nodes,
             edges=edges,
@@ -198,6 +216,38 @@ def explain_step_function_dependencies(
         "permission_hints": permission_hints,
         "permission_checks": permission_checks,
         "warnings": warnings,
+    }
+
+
+def audit_step_function_retry_catch_safety(
+    runtime: AwsRuntime,
+    state_machine_arn: str,
+    region: str | None = None,
+) -> dict[str, Any]:
+    dependencies = explain_step_function_dependencies(
+        runtime,
+        state_machine_arn=state_machine_arn,
+        region=region,
+        include_permission_checks=False,
+    )
+    states = dependencies.get("nodes", {}).get("states", [])
+    task_audits = [_step_function_task_retry_catch_audit(state) for state in states]
+    terminal_failures = [
+        {"name": state.get("name"), "type": state.get("type")}
+        for state in states
+        if state.get("type") == "Fail"
+    ]
+    signals = _step_function_retry_catch_signals(task_audits, terminal_failures)
+    return {
+        "state_machine_name": dependencies["state_machine_name"],
+        "state_machine_arn": dependencies["state_machine_arn"],
+        "region": dependencies["region"],
+        "summary": _step_function_retry_catch_summary(signals),
+        "task_audits": task_audits,
+        "terminal_failure_states": terminal_failures,
+        "signals": signals,
+        "suggested_next_checks": _step_function_retry_catch_next_checks(signals),
+        "warnings": dependencies.get("warnings", []),
     }
 
 
@@ -245,14 +295,21 @@ def _parse_state_machine_definition(
     return parsed, []
 
 
-def _asl_states(definition: dict[str, Any]) -> list[dict[str, Any]]:
+def _asl_states(
+    definition: dict[str, Any],
+    state_machine_arn: str | None = None,
+) -> list[dict[str, Any]]:
     states = definition.get("States", {})
     if not isinstance(states, dict):
         return []
-    return [_asl_state_summary(name, value) for name, value in states.items()]
+    return [_asl_state_summary(name, value, state_machine_arn) for name, value in states.items()]
 
 
-def _asl_state_summary(name: str, value: Any) -> dict[str, Any]:
+def _asl_state_summary(
+    name: str,
+    value: Any,
+    state_machine_arn: str | None = None,
+) -> dict[str, Any]:
     state = value if isinstance(value, dict) else {}
     state_type = str(state.get("Type") or "")
     resource = state.get("Resource")
@@ -265,7 +322,7 @@ def _asl_state_summary(name: str, value: Any) -> dict[str, Any]:
         "type": state_type or None,
         "resource": resource if state_type == "Task" else None,
         "integration": _step_function_integration(resource),
-        "target_arn": _step_function_task_target_arn(resource, parameters),
+        "target_arn": _step_function_task_target_arn(resource, parameters, state_machine_arn),
         "next": state.get("Next"),
         "default_next": state.get("Default"),
         "choice_next": [
@@ -276,7 +333,123 @@ def _asl_state_summary(name: str, value: Any) -> dict[str, Any]:
         "end": state.get("End") is True,
         "timeout_seconds": state.get("TimeoutSeconds"),
         "heartbeat_seconds": state.get("HeartbeatSeconds"),
+        "retry": _retry_catch_summary(state.get("Retry")),
+        "catch": _retry_catch_summary(state.get("Catch")),
     }
+
+
+def _retry_catch_summary(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    summary = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        summary.append(
+            {
+                "error_equals": item.get("ErrorEquals", []),
+                "next": item.get("Next"),
+                "interval_seconds": item.get("IntervalSeconds"),
+                "max_attempts": item.get("MaxAttempts"),
+                "backoff_rate": item.get("BackoffRate"),
+            }
+        )
+    return summary
+
+
+def _step_function_task_retry_catch_audit(state: dict[str, Any]) -> dict[str, Any]:
+    if state.get("type") != "Task":
+        return {
+            "name": state.get("name"),
+            "type": state.get("type"),
+            "included": False,
+        }
+    retry = state.get("retry") or []
+    catch = state.get("catch") or []
+    risks = []
+    integration = state.get("integration")
+    if not retry:
+        risks.append("task_without_retry")
+    if not catch:
+        risks.append("task_without_catch")
+    if integration and integration not in {"unknown"} and not catch:
+        risks.append("external_integration_without_catch")
+    if retry and not _retry_handles_transient_errors(retry):
+        risks.append("retry_without_transient_errors")
+    return {
+        "name": state.get("name"),
+        "type": state.get("type"),
+        "integration": integration,
+        "target_arn": state.get("target_arn"),
+        "retry_count": len(retry),
+        "catch_count": len(catch),
+        "retry_error_sets": [item.get("error_equals", []) for item in retry],
+        "catch_error_sets": [item.get("error_equals", []) for item in catch],
+        "risks": risks,
+        "included": True,
+    }
+
+
+def _retry_handles_transient_errors(retry: list[dict[str, Any]]) -> bool:
+    transient = {
+        "States.ALL",
+        "States.TaskFailed",
+        "Lambda.ServiceException",
+        "Lambda.AWSLambdaException",
+        "Lambda.SdkClientException",
+        "ThrottlingException",
+    }
+    return any(
+        transient.intersection({str(error) for error in item.get("error_equals", [])})
+        for item in retry
+    )
+
+
+def _step_function_retry_catch_signals(
+    task_audits: list[dict[str, Any]],
+    terminal_failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    included = [item for item in task_audits if item.get("included")]
+    risks = [risk for item in included for risk in item.get("risks", [])]
+    return {
+        "task_count": len(included),
+        "terminal_failure_state_count": len(terminal_failures),
+        "tasks_without_retry": [
+            item["name"] for item in included if "task_without_retry" in item["risks"]
+        ],
+        "tasks_without_catch": [
+            item["name"] for item in included if "task_without_catch" in item["risks"]
+        ],
+        "external_integrations_without_catch": [
+            item["name"]
+            for item in included
+            if "external_integration_without_catch" in item["risks"]
+        ],
+        "risk_count": len(risks),
+        "risks": sorted(set(risks)),
+    }
+
+
+def _step_function_retry_catch_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "retry_catch_gaps" if signals["risk_count"] else "retry_catch_covered",
+        "task_count": signals["task_count"],
+        "risk_count": signals["risk_count"],
+        "risks": signals["risks"],
+    }
+
+
+def _step_function_retry_catch_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if signals["tasks_without_retry"]:
+        checks.append("Review retry coverage for high-risk task states.")
+    if signals["tasks_without_catch"]:
+        checks.append("Add Catch handlers where task failures should be controlled.")
+    if signals["terminal_failure_state_count"]:
+        checks.append("Confirm terminal Fail states are expected incident boundaries.")
+    if not checks:
+        checks.append("No Step Functions retry/catch coverage gap found.")
+    return checks
 
 
 def _step_function_flow_summary(
@@ -527,6 +700,56 @@ def _step_function_permission_checks(
     }
 
 
+def _step_function_task_permission_proof(
+    states: list[dict[str, Any]],
+    permission_checks: dict[str, Any],
+) -> dict[str, Any]:
+    checks = permission_checks.get("checks", [])
+    checks_by_resource: dict[str, list[dict[str, Any]]] = {}
+    for check in checks:
+        checks_by_resource.setdefault(str(check.get("resource_arn")), []).append(check)
+    task_proofs = []
+    for state in states:
+        if state.get("type") != "Task":
+            continue
+        target = str(state.get("target_arn") or "")
+        state_checks = checks_by_resource.get(target, [])
+        task_proofs.append(
+            {
+                "state_name": state.get("name"),
+                "integration": state.get("integration"),
+                "target_arn": target or None,
+                "retry_count": len(state.get("retry") or []),
+                "catch_count": len(state.get("catch") or []),
+                "permission_status": _task_permission_status(state_checks),
+                "checked_actions": sorted(
+                    str(check.get("action")) for check in state_checks if check.get("action")
+                ),
+            }
+        )
+    blockers = [
+        proof["state_name"]
+        for proof in task_proofs
+        if proof["permission_status"] in {"denied", "unknown"}
+    ]
+    return {
+        "status": "blocked" if blockers else "ready",
+        "task_count": len(task_proofs),
+        "blocked_state_names": blockers,
+        "tasks": task_proofs,
+    }
+
+
+def _task_permission_status(checks: list[dict[str, Any]]) -> str:
+    if not checks:
+        return "not_checked"
+    if any(check.get("allowed") is False for check in checks):
+        return "denied"
+    if any(check.get("allowed") is None for check in checks):
+        return "unknown"
+    return "allowed"
+
+
 def _permission_candidates(permission_hints: list[dict[str, Any]]) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for hint in permission_hints:
@@ -667,10 +890,15 @@ def _step_function_integration(resource: Any) -> str | None:
     return _arn_service(value)
 
 
-def _step_function_task_target_arn(resource: Any, parameters: dict[str, Any]) -> str | None:
+def _step_function_task_target_arn(
+    resource: Any,
+    parameters: dict[str, Any],
+    state_machine_arn: str | None = None,
+) -> str | None:
     value = str(resource or "")
     if value.startswith("arn:aws:lambda:"):
         return value
+    parsed_state_machine = _state_machine_parts(state_machine_arn)
     for key in [
         "FunctionName",
         "FunctionName.$",
@@ -684,11 +912,45 @@ def _step_function_task_target_arn(resource: Any, parameters: dict[str, Any]) ->
         "TableName.$",
         "JobQueue",
         "JobQueue.$",
+        "EventBusName",
+        "EventBusName.$",
     ]:
         candidate = parameters.get(key)
         if isinstance(candidate, str) and candidate.startswith("arn:"):
             return candidate
+        if key.startswith("QueueUrl") and isinstance(candidate, str):
+            queue_arn = _sqs_queue_arn_from_url(candidate)
+            if queue_arn:
+                return queue_arn
+        if key.startswith("TableName") and isinstance(candidate, str) and parsed_state_machine:
+            return (
+                f"arn:{parsed_state_machine['partition']}:dynamodb:"
+                f"{parsed_state_machine['region']}:{parsed_state_machine['account']}:"
+                f"table/{candidate}"
+            )
     return None
+
+
+def _state_machine_parts(state_machine_arn: str | None) -> dict[str, str] | None:
+    if not state_machine_arn:
+        return None
+    match = re.fullmatch(
+        r"arn:(?P<partition>aws[a-zA-Z-]*):states:(?P<region>[^:]+):"
+        r"(?P<account>\d{12}):stateMachine:.+",
+        state_machine_arn,
+    )
+    return match.groupdict() if match else None
+
+
+def _sqs_queue_arn_from_url(queue_url: str) -> str | None:
+    match = re.search(
+        r"https?://sqs[.-](?P<region>[^./]+)\.amazonaws\.com/(?P<account>\d{12})/(?P<name>[^/?]+)",
+        queue_url,
+    )
+    if not match:
+        return None
+    parts = match.groupdict()
+    return f"arn:aws:sqs:{parts['region']}:{parts['account']}:{parts['name']}"
 
 
 def _step_function_actions_for_integration(integration: Any, target: Any) -> list[str]:
@@ -704,6 +966,8 @@ def _step_function_actions_for_integration(integration: Any, target: Any) -> lis
         return ["sns:Publish"]
     if integration == "sqs":
         return ["sqs:SendMessage"]
+    if integration == "events":
+        return ["events:PutEvents"]
     if integration == "states":
         return ["states:StartExecution"]
     if integration == "dynamodb":
@@ -773,6 +1037,116 @@ def _failed_event_summary(
         "state_name": _state_entered_name(state_entered) or details.get("name"),
         "error": details.get("error"),
         "cause": details.get("cause"),
+        "previous_event_context": _previous_event_context(state_entered),
+    }
+
+
+def _previous_event_context(event: dict[str, Any] | None) -> dict[str, Any] | None:
+    if event is None:
+        return None
+    return {
+        "event_id": event.get("id"),
+        "previous_event_id": event.get("previousEventId"),
+        "timestamp": isoformat(event.get("timestamp")),
+        "type": event.get("type"),
+        "state_name": _state_entered_name(event),
+    }
+
+
+def _step_function_failure_definition_context(
+    runtime: AwsRuntime,
+    execution_arn: str,
+    summary: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    failed_state = summary.get("failed_state")
+    if not isinstance(failed_state, dict) or not failed_state.get("state_name"):
+        return {}, []
+    state_machine_arn = _state_machine_arn_from_execution_arn(execution_arn)
+    if state_machine_arn is None:
+        return {}, ["Unable to derive state machine ARN from execution ARN"]
+    region = str(summary.get("region") or runtime.region)
+    client = runtime.client("stepfunctions", region=region)
+    try:
+        state_machine = client.describe_state_machine(stateMachineArn=state_machine_arn)
+    except (BotoCoreError, ClientError) as exc:
+        return {}, [str(normalize_aws_error(exc, "states.DescribeStateMachine"))]
+
+    definition, warnings = _parse_state_machine_definition(
+        state_machine.get("definition"),
+        runtime.config.redaction.max_string_length,
+    )
+    states = _asl_states(definition, state_machine_arn)
+    state = next(
+        (item for item in states if item.get("name") == failed_state.get("state_name")),
+        None,
+    )
+    if state is None:
+        return {}, [*warnings, "Failed state was not found in the state machine definition"]
+    edges = _step_function_dependency_edges(state_machine_arn, states)
+    downstream_edge = next(
+        (edge for edge in edges if edge.get("state_name") == state.get("name")),
+        None,
+    )
+    path = _path_to_state(definition, states, str(state["name"]))
+    return {
+        "failed_state_definition": {
+            "name": state.get("name"),
+            "type": state.get("type"),
+            "resource": state.get("resource"),
+            "integration": state.get("integration"),
+            "target_arn": state.get("target_arn"),
+            "next": state.get("next"),
+            "end": state.get("end"),
+            "timeout_seconds": state.get("timeout_seconds"),
+            "heartbeat_seconds": state.get("heartbeat_seconds"),
+        },
+        "failed_state_path": path,
+        "downstream_target": _downstream_target_context(downstream_edge),
+        "retry_catch": {
+            "retry": state.get("retry", []),
+            "catch": state.get("catch", []),
+            "has_retry": bool(state.get("retry")),
+            "has_catch": bool(state.get("catch")),
+        },
+    }, warnings
+
+
+def _state_machine_arn_from_execution_arn(execution_arn: str) -> str | None:
+    match = re.fullmatch(
+        r"arn:(?P<partition>aws[a-zA-Z-]*):states:(?P<region>[^:]+):"
+        r"(?P<account>\d{12}):execution:(?P<state_machine_name>[^:]+):.+",
+        execution_arn,
+    )
+    if not match:
+        return None
+    parts = match.groupdict()
+    return (
+        f"arn:{parts['partition']}:states:{parts['region']}:{parts['account']}:"
+        f"stateMachine:{parts['state_machine_name']}"
+    )
+
+
+def _path_to_state(
+    definition: dict[str, Any],
+    states: list[dict[str, Any]],
+    target_state_name: str,
+) -> list[str]:
+    states_by_name = {str(state.get("name")): state for state in states}
+    start_at = definition.get("StartAt") if isinstance(definition, dict) else None
+    for path in _linear_paths(states_by_name, start_at):
+        if target_state_name in path:
+            return path[: path.index(target_state_name) + 1]
+    return [target_state_name]
+
+
+def _downstream_target_context(edge: dict[str, Any] | None) -> dict[str, Any] | None:
+    if edge is None:
+        return None
+    return {
+        "target": edge.get("to"),
+        "target_type": edge.get("target_type"),
+        "relationship": edge.get("relationship"),
+        "resource": edge.get("resource"),
     }
 
 

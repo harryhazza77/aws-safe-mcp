@@ -8,8 +8,11 @@ from botocore.exceptions import ClientError
 
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.tools.apigateway import (
+    analyze_api_gateway_authorizer_failures,
     explain_api_gateway_dependencies,
+    get_api_gateway_authorizer_summary,
     get_api_gateway_summary,
+    investigate_api_gateway_route,
     list_api_gateways,
 )
 
@@ -41,7 +44,30 @@ class FakeRestApiClient:
                 {
                     "id": "resource1",
                     "path": "/orders",
-                    "resourceMethods": {"GET": {}, "POST": {}},
+                    "resourceMethods": {
+                        "GET": {
+                            "authorizationType": "CUSTOM",
+                            "authorizerId": "auth1",
+                        },
+                        "POST": {"authorizationType": "NONE"},
+                    },
+                }
+            ]
+        }
+
+    def get_authorizers(self, **_: Any) -> dict[str, Any]:
+        return {
+            "items": [
+                {
+                    "id": "auth1",
+                    "name": "orders-auth",
+                    "type": "REQUEST",
+                    "identitySource": "method.request.header.Authorization",
+                    "authorizerUri": (
+                        "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/"
+                        "arn:aws:lambda:eu-west-2:123456789012:function:auth/invocations"
+                    ),
+                    "authorizerResultTtlInSeconds": 300,
                 }
             ]
         }
@@ -81,7 +107,34 @@ class FakeHttpApiClient:
         }
 
     def get_routes(self, **_: Any) -> dict[str, Any]:
-        return {"Items": [{"RouteKey": "GET /orders", "Target": "integrations/int1"}]}
+        return {
+            "Items": [
+                {
+                    "RouteKey": "GET /orders",
+                    "Target": "integrations/int1",
+                    "AuthorizationType": "CUSTOM",
+                    "AuthorizerId": "auth1",
+                },
+                {"RouteKey": "POST /orders", "Target": "integrations/int1"},
+            ]
+        }
+
+    def get_authorizers(self, **_: Any) -> dict[str, Any]:
+        return {
+            "Items": [
+                {
+                    "AuthorizerId": "auth1",
+                    "Name": "orders-auth",
+                    "AuthorizerType": "REQUEST",
+                    "IdentitySource": ["$request.header.Authorization"],
+                    "AuthorizerUri": (
+                        "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/"
+                        "arn:aws:lambda:eu-west-2:123456789012:function:auth/invocations"
+                    ),
+                    "AuthorizerResultTtlInSeconds": 300,
+                }
+            ]
+        }
 
     def get_integration(self, **_: Any) -> dict[str, Any]:
         return {
@@ -109,6 +162,31 @@ class FakeLambdaClient:
             )
         }
 
+    def get_function_configuration(self, FunctionName: str) -> dict[str, Any]:
+        return {
+            "FunctionName": FunctionName.rsplit(":", 1)[-1],
+            "FunctionArn": FunctionName,
+            "Runtime": "python3.11",
+            "Handler": "index.handler",
+            "State": "Active",
+            "LastUpdateStatus": "Successful",
+            "Role": "arn:aws:iam::123456789012:role/dev-api-role",
+            "Timeout": 10,
+            "MemorySize": 128,
+        }
+
+
+class FakeLogsClient:
+    def filter_log_events(self, **_: Any) -> dict[str, Any]:
+        return {
+            "events": [
+                {
+                    "timestamp": 1778918870000,
+                    "message": "ERROR failed request 123",
+                }
+            ]
+        }
+
 
 class FakeRuntime:
     def __init__(self) -> None:
@@ -117,6 +195,7 @@ class FakeRuntime:
         self.rest = FakeRestApiClient()
         self.http = FakeHttpApiClient()
         self.lambda_client = FakeLambdaClient()
+        self.logs = FakeLogsClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
         assert region == "eu-west-2"
@@ -126,6 +205,8 @@ class FakeRuntime:
             return self.http
         if service_name == "lambda":
             return self.lambda_client
+        if service_name == "logs":
+            return self.logs
         raise AssertionError(service_name)
 
 
@@ -136,6 +217,7 @@ class RuntimeWithClients:
         self.rest = rest
         self.http = http
         self.lambda_client = lambda_client or FakeLambdaClient()
+        self.logs = FakeLogsClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
         assert region == "eu-west-2"
@@ -145,6 +227,8 @@ class RuntimeWithClients:
             return self.http
         if service_name == "lambda":
             return self.lambda_client
+        if service_name == "logs":
+            return self.logs
         raise AssertionError(service_name)
 
 
@@ -186,7 +270,53 @@ def test_get_api_gateway_summary_returns_http_summary() -> None:
     result = get_api_gateway_summary(FakeRuntime(), "http1", api_type="http")
 
     assert result["api_type"] == "HTTP"
-    assert result["route_count"] == 1
+    assert result["route_count"] == 2
+
+
+def test_get_api_gateway_authorizer_summary_returns_http_routes() -> None:
+    result = get_api_gateway_authorizer_summary(FakeRuntime(), "http1", api_type="http")
+
+    assert result["summary"] == {
+        "authorizer_count": 1,
+        "attached_route_count": 1,
+        "unauthenticated_route_count": 1,
+        "lambda_authorizer_count": 1,
+    }
+    assert result["authorizers"][0]["identity_sources"] == ["$request.header.Authorization"]
+    assert result["authorizers"][0]["lambda_function_arn"].endswith(":function:auth")
+    assert result["routes"][0]["authorizer_name"] == "orders-auth"
+
+
+def test_get_api_gateway_authorizer_summary_returns_rest_routes() -> None:
+    result = get_api_gateway_authorizer_summary(FakeRuntime(), "rest1", api_type="rest")
+
+    assert result["summary"]["authorizer_count"] == 1
+    assert result["summary"]["attached_route_count"] == 1
+    assert result["routes"][0]["route_key"] == "GET /orders"
+    assert result["routes"][0]["authorizer_name"] == "orders-auth"
+
+
+def test_analyze_api_gateway_authorizer_failures_reports_lambda_error_risks() -> None:
+    result = analyze_api_gateway_authorizer_failures(
+        FakeRuntime(),
+        "http1",
+        route_key="GET /orders",
+        api_type="http",
+        max_events=5,
+    )
+
+    assert result["summary"] == {
+        "status": "auth_failure_risks",
+        "route_count": 1,
+        "protected_route_count": 1,
+        "risk_count": 1,
+        "risks": ["recent_authorizer_lambda_errors"],
+    }
+    route = result["routes"][0]
+    assert route["authorizer"]["identity_sources"] == ["$request.header.Authorization"]
+    assert route["lambda_permission"]["allows_apigateway_invoke"] is True
+    assert route["lambda"]["recent_error_count"] == 1
+    assert any("authorizer Lambda errors" in check for check in result["suggested_next_checks"])
 
 
 def test_explain_api_gateway_dependencies_returns_rest_routes_and_policy() -> None:
@@ -210,10 +340,69 @@ def test_explain_api_gateway_dependencies_returns_http_routes_and_policy() -> No
     result = explain_api_gateway_dependencies(FakeRuntime(), "http1", api_type="http")
 
     assert result["api_type"] == "HTTP"
-    assert result["summary"]["route_count"] == 1
+    assert result["summary"]["route_count"] == 2
     assert result["routes"][0]["route_key"] == "GET /orders"
     assert result["routes"][0]["lambda_function_arn"].endswith(":function:dev-http")
     assert result["permission_hints"][0]["principal"] == "apigateway.amazonaws.com"
+
+
+def test_investigate_api_gateway_route_reports_lambda_permission_and_errors() -> None:
+    result = investigate_api_gateway_route(
+        FakeRuntime(),
+        "http1",
+        route_key="GET /orders",
+        api_type="http",
+        max_events=5,
+    )
+
+    assert result["route"]["route_key"] == "GET /orders"
+    assert result["integration"]["lambda_function_arn"].endswith(":function:dev-http")
+    assert result["lambda_permission"]["allows_apigateway_invoke"] is True
+    assert result["lambda"]["summary"]["runtime"] == "python3.11"
+    assert result["lambda"]["recent_error_count"] == 1
+    assert result["diagnostic_summary"] == (
+        "Route targets Lambda and recent Lambda error signals were found."
+    )
+    assert result["callability_summary"] == {
+        "status": "likely_callable",
+        "blockers": [],
+        "recent_lambda_error_count": 1,
+    }
+    assert result["callability_signals"]["lambda_permission_allows_invoke"] is True
+    assert result["callability_signals"]["lambda_active"] is True
+    assert any("Lambda errors" in check for check in result["suggested_next_checks"])
+
+
+def test_investigate_api_gateway_route_reports_missing_invoke_permission() -> None:
+    class DenyingPolicyLambdaClient(FakeLambdaClient):
+        def get_policy(self, FunctionName: str) -> dict[str, Any]:
+            return {
+                "Policy": json.dumps(
+                    {
+                        "Statement": {
+                            "Effect": "Allow",
+                            "Principal": {"Service": "events.amazonaws.com"},
+                            "Action": ["lambda:InvokeFunction"],
+                            "Resource": FunctionName,
+                        }
+                    }
+                )
+            }
+
+    result = investigate_api_gateway_route(
+        RuntimeWithClients(
+            rest=EmptyRestApiClient(),
+            http=FakeHttpApiClient(),
+            lambda_client=DenyingPolicyLambdaClient(),
+        ),
+        "http1",
+        route_key="GET /orders",
+        api_type="http",
+    )
+
+    assert result["diagnostic_summary"] == (
+        "Route targets Lambda but API Gateway invoke permission was not found."
+    )
 
 
 def test_get_api_gateway_summary_follows_v2_route_pagination() -> None:

@@ -8,7 +8,12 @@ from botocore.exceptions import ClientError
 
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
-from aws_safe_mcp.tools.s3 import get_s3_bucket_summary, list_s3_buckets, list_s3_objects
+from aws_safe_mcp.tools.s3 import (
+    check_s3_notification_destination_readiness,
+    get_s3_bucket_summary,
+    list_s3_buckets,
+    list_s3_objects,
+)
 
 
 class FakeS3Client:
@@ -87,8 +92,21 @@ class FakeS3Client:
 
     def get_bucket_notification_configuration(self, **_: Any) -> dict[str, Any]:
         return {
-            "LambdaFunctionConfigurations": [{}],
-            "QueueConfigurations": [{}],
+            "LambdaFunctionConfigurations": [
+                {
+                    "Id": "lambda",
+                    "LambdaFunctionArn": "arn:aws:lambda:eu-west-2:123456789012:function:fn",
+                    "Events": ["s3:ObjectCreated:*"],
+                    "Filter": {"Key": {"FilterRules": [{"Name": "suffix", "Value": ".json"}]}},
+                }
+            ],
+            "QueueConfigurations": [
+                {
+                    "Id": "queue",
+                    "QueueArn": "arn:aws:sqs:eu-west-2:123456789012:bucket-events",
+                    "Events": ["s3:ObjectCreated:*"],
+                }
+            ],
             "EventBridgeConfiguration": {},
         }
 
@@ -101,11 +119,43 @@ class FakeRuntime:
         )
         self.region = "eu-west-2"
         self.s3_client = FakeS3Client()
+        self.lambda_client = FakeLambdaClient()
+        self.sqs_client = FakeSqsClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
-        assert service_name == "s3"
         assert region == "eu-west-2"
-        return self.s3_client
+        if service_name == "s3":
+            return self.s3_client
+        if service_name == "lambda":
+            return self.lambda_client
+        if service_name == "sqs":
+            return self.sqs_client
+        raise AssertionError(service_name)
+
+
+class FakeLambdaClient:
+    def get_policy(self, FunctionName: str) -> dict[str, Any]:
+        return {
+            "Policy": (
+                '{"Statement":{"Effect":"Allow","Principal":{"Service":"s3.amazonaws.com"},'
+                '"Action":"lambda:InvokeFunction","Resource":"'
+                + FunctionName
+                + '","Condition":{"ArnLike":{"AWS:SourceArn":"arn:aws:s3:::allowed-bucket"}}}}'
+            )
+        }
+
+
+class FakeSqsClient:
+    def get_queue_attributes(self, **_: Any) -> dict[str, Any]:
+        return {
+            "Attributes": {
+                "Policy": (
+                    '{"Statement":{"Effect":"Allow","Principal":{"Service":"s3.amazonaws.com"},'
+                    '"Action":"sqs:SendMessage","Resource":"*",'
+                    '"Condition":{"ArnLike":{"AWS:SourceArn":"arn:aws:s3:::allowed-bucket"}}}}'
+                )
+            }
+        }
 
 
 def test_list_s3_buckets_returns_metadata_only() -> None:
@@ -164,6 +214,22 @@ def test_get_s3_bucket_summary_returns_metadata_only() -> None:
     assert result["logging"]["target_bucket"] == "logs"
     assert result["notifications"]["lambda_configurations"] == 1
     assert result["warnings"] == []
+
+
+def test_check_s3_notification_destination_readiness_checks_policies() -> None:
+    result = check_s3_notification_destination_readiness(FakeRuntime(), "allowed-bucket")
+
+    assert result["summary"] == {
+        "status": "ready",
+        "destination_count": 2,
+        "risk_count": 0,
+        "risks": [],
+    }
+    assert result["destinations"][0]["destination_type"] == "lambda"
+    assert result["destinations"][0]["filter_rules"] == [{"name": "suffix", "value": ".json"}]
+    assert result["destinations"][0]["policy_decision"] == "allowed"
+    assert result["destinations"][1]["policy_decision"] == "allowed"
+    assert "Statement" not in str(result)
 
 
 def test_list_s3_objects_clamps_max_keys_to_configured_limit() -> None:

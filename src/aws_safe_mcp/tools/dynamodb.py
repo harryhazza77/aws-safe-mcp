@@ -91,6 +91,50 @@ def dynamodb_table_summary(
     }
 
 
+def check_dynamodb_stream_lambda_readiness(
+    runtime: AwsRuntime,
+    table_name: str,
+    region: str | None = None,
+    max_results: int | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    table = dynamodb_table_summary(runtime, table_name, region=resolved_region)
+    stream = table.get("stream", {})
+    stream_arn = stream.get("stream_arn") if isinstance(stream, dict) else None
+    limit = clamp_limit(
+        max_results,
+        default=20,
+        configured_max=runtime.config.max_results,
+        label="max_results",
+    )
+    warnings: list[str] = []
+    mappings = (
+        _lambda_mappings_for_stream(runtime, resolved_region, str(stream_arn), limit, warnings)
+        if stream_arn
+        else []
+    )
+    permission_checks = _stream_lambda_permission_checks(
+        runtime,
+        resolved_region,
+        mappings,
+        str(stream_arn or ""),
+        warnings,
+    )
+    signals = _stream_lambda_readiness_signals(stream, mappings, permission_checks)
+    return {
+        "table_name": table["table_name"],
+        "table_arn": table["table_arn"],
+        "region": resolved_region,
+        "stream": stream,
+        "lambda_mappings": mappings,
+        "permission_checks": permission_checks,
+        "summary": _stream_lambda_readiness_summary(signals),
+        "signals": signals,
+        "suggested_next_checks": _stream_lambda_readiness_next_checks(signals),
+        "warnings": warnings,
+    }
+
+
 def _billing_mode(table: dict[str, Any]) -> str:
     billing = table.get("BillingModeSummary", {})
     if isinstance(billing, dict) and billing.get("BillingMode"):
@@ -119,6 +163,209 @@ def _stream_summary(table: dict[str, Any]) -> dict[str, Any]:
         "view_type": spec.get("StreamViewType"),
         "stream_arn": table.get("LatestStreamArn"),
     }
+
+
+def _lambda_mappings_for_stream(
+    runtime: AwsRuntime,
+    region: str,
+    stream_arn: str,
+    limit: int,
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    client = runtime.client("lambda", region=region)
+    try:
+        response = client.list_event_source_mappings(
+            EventSourceArn=stream_arn,
+            MaxItems=min(limit, 100),
+        )
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "lambda.ListEventSourceMappings")))
+        return []
+    return [
+        {
+            "uuid": item.get("UUID"),
+            "state": item.get("State"),
+            "function_arn": item.get("FunctionArn"),
+            "function_name": str(item.get("FunctionArn") or "").rsplit(":", 1)[-1],
+            "batch_size": item.get("BatchSize"),
+            "maximum_batching_window_seconds": item.get("MaximumBatchingWindowInSeconds"),
+            "bisect_batch_on_function_error": item.get("BisectBatchOnFunctionError"),
+            "function_response_types": item.get("FunctionResponseTypes", []),
+            "starting_position": item.get("StartingPosition"),
+            "maximum_retry_attempts": item.get("MaximumRetryAttempts"),
+            "maximum_record_age_seconds": item.get("MaximumRecordAgeInSeconds"),
+            "destination_config": item.get("DestinationConfig") or {},
+        }
+        for item in response.get("EventSourceMappings", [])[:limit]
+    ]
+
+
+def _stream_lambda_permission_checks(
+    runtime: AwsRuntime,
+    region: str,
+    mappings: list[dict[str, Any]],
+    stream_arn: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    checks = []
+    for mapping in mappings:
+        role_arn = _lambda_role_arn(
+            runtime,
+            region,
+            str(mapping.get("function_arn") or ""),
+            warnings,
+        )
+        for action in [
+            "dynamodb:DescribeStream",
+            "dynamodb:GetRecords",
+            "dynamodb:GetShardIterator",
+            "dynamodb:ListStreams",
+        ]:
+            checks.append(
+                _simulate_stream_permission(
+                    runtime,
+                    role_arn,
+                    action,
+                    stream_arn,
+                    str(mapping.get("uuid") or ""),
+                    warnings,
+                )
+            )
+    return {
+        "enabled": True,
+        "checked_count": len(checks),
+        "checks": checks,
+        "summary": {
+            "allowed": sum(1 for check in checks if check.get("allowed") is True),
+            "denied": sum(1 for check in checks if check.get("allowed") is False),
+            "unknown": sum(1 for check in checks if check.get("allowed") is None),
+        },
+    }
+
+
+def _lambda_role_arn(
+    runtime: AwsRuntime,
+    region: str,
+    function_name: str,
+    warnings: list[str],
+) -> str | None:
+    if not function_name:
+        return None
+    client = runtime.client("lambda", region=region)
+    try:
+        response = client.get_function_configuration(FunctionName=function_name)
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "lambda.GetFunctionConfiguration")))
+        return None
+    role = response.get("Role")
+    return str(role) if role else None
+
+
+def _simulate_stream_permission(
+    runtime: AwsRuntime,
+    role_arn: str | None,
+    action: str,
+    stream_arn: str,
+    mapping_uuid: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    if not role_arn:
+        return {
+            "mapping_uuid": mapping_uuid,
+            "principal_arn": None,
+            "action": action,
+            "resource_arn": stream_arn,
+            "allowed": None,
+            "decision": "unknown",
+        }
+    iam = runtime.client("iam", region=runtime.region)
+    try:
+        response = iam.simulate_principal_policy(
+            PolicySourceArn=role_arn,
+            ActionNames=[action],
+            ResourceArns=[stream_arn],
+        )
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "iam.SimulatePrincipalPolicy")))
+        return {
+            "mapping_uuid": mapping_uuid,
+            "principal_arn": role_arn,
+            "action": action,
+            "resource_arn": stream_arn,
+            "allowed": None,
+            "decision": "unknown",
+        }
+    result = (response.get("EvaluationResults") or [{}])[0]
+    decision = str(result.get("EvalDecision") or "unknown")
+    return {
+        "mapping_uuid": mapping_uuid,
+        "principal_arn": role_arn,
+        "action": action,
+        "resource_arn": stream_arn,
+        "allowed": decision == "allowed",
+        "decision": decision,
+    }
+
+
+def _stream_lambda_readiness_signals(
+    stream: Any,
+    mappings: list[dict[str, Any]],
+    permission_checks: dict[str, Any],
+) -> dict[str, Any]:
+    stream_enabled = bool(stream.get("enabled")) if isinstance(stream, dict) else False
+    risks = []
+    if not stream_enabled:
+        risks.append("stream_not_enabled")
+    if stream_enabled and not mappings:
+        risks.append("stream_enabled_without_lambda_mapping")
+    if any(str(mapping.get("state") or "").lower() != "enabled" for mapping in mappings):
+        risks.append("event_source_mapping_not_enabled")
+    if any(not mapping.get("bisect_batch_on_function_error") for mapping in mappings):
+        risks.append("bisect_batch_not_enabled")
+    if any(
+        "ReportBatchItemFailures" not in mapping.get("function_response_types", [])
+        for mapping in mappings
+    ):
+        risks.append("partial_batch_response_not_enabled")
+    if any(not mapping.get("destination_config") for mapping in mappings):
+        risks.append("failure_destination_not_configured")
+    if permission_checks.get("summary", {}).get("denied"):
+        risks.append("stream_read_permission_denied")
+    if permission_checks.get("summary", {}).get("unknown"):
+        risks.append("stream_read_permission_unknown")
+    return {
+        "stream_enabled": stream_enabled,
+        "mapping_count": len(mappings),
+        "enabled_mapping_count": sum(
+            1 for mapping in mappings if str(mapping.get("state") or "").lower() == "enabled"
+        ),
+        "risk_count": len(risks),
+        "risks": sorted(set(risks)),
+    }
+
+
+def _stream_lambda_readiness_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "needs_attention" if signals["risk_count"] else "ready",
+        "mapping_count": signals["mapping_count"],
+        "risk_count": signals["risk_count"],
+        "risks": signals["risks"],
+    }
+
+
+def _stream_lambda_readiness_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if "stream_not_enabled" in signals["risks"]:
+        checks.append("Enable DynamoDB Streams before configuring Lambda consumption.")
+    if "stream_enabled_without_lambda_mapping" in signals["risks"]:
+        checks.append("Create or repair a Lambda event source mapping for the stream.")
+    if "stream_read_permission_denied" in signals["risks"]:
+        checks.append("Grant the Lambda role DynamoDB stream read actions.")
+    if "partial_batch_response_not_enabled" in signals["risks"]:
+        checks.append("Consider ReportBatchItemFailures for stream batch processing.")
+    if not checks:
+        checks.append("No DynamoDB stream-to-Lambda readiness blocker found.")
+    return checks
 
 
 def _sse_summary(table: dict[str, Any]) -> dict[str, Any]:

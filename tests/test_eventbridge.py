@@ -10,8 +10,10 @@ import aws_safe_mcp.tools.eventbridge as eventbridge_module
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import ToolInputError
 from aws_safe_mcp.tools.eventbridge import (
+    audit_eventbridge_target_retry_dlq_safety,
     explain_event_driven_flow,
     explain_eventbridge_rule_dependencies,
+    get_eventbridge_time_sources,
     investigate_eventbridge_rule_delivery,
     list_eventbridge_rules,
 )
@@ -153,6 +155,54 @@ class FakeEventsClient:
             return {"Targets": []}
         return {"Targets": []}
 
+    def list_archives(self, **_: Any) -> dict[str, Any]:
+        return {
+            "Archives": [
+                {
+                    "ArchiveName": "orders-archive",
+                    "ArchiveArn": "arn:aws:events:eu-west-2:123456789012:archive/orders",
+                    "State": "ENABLED",
+                    "EventCount": 10,
+                    "RetentionDays": 7,
+                    "EventSourceArn": (
+                        "arn:aws:events:eu-west-2:123456789012:event-bus/default"
+                    ),
+                }
+            ]
+        }
+
+    def list_replays(self, **_: Any) -> dict[str, Any]:
+        return {
+            "Replays": [
+                {
+                    "ReplayName": "orders-replay",
+                    "State": "COMPLETED",
+                    "EventSourceArn": (
+                        "arn:aws:events:eu-west-2:123456789012:archive/orders"
+                    ),
+                    "EventStartTime": datetime(2026, 1, 1, tzinfo=UTC),
+                    "EventEndTime": datetime(2026, 1, 2, tzinfo=UTC),
+                }
+            ]
+        }
+
+
+class FakeSchedulerClient:
+    def list_schedules(self, **_: Any) -> dict[str, Any]:
+        return {
+            "Schedules": [
+                {
+                    "Name": "nightly-orders",
+                    "GroupName": "default",
+                    "State": "ENABLED",
+                    "ScheduleExpression": "cron(0 0 * * ? *)",
+                    "Target": {
+                        "Arn": "arn:aws:lambda:eu-west-2:123456789012:function:dev-handler"
+                    },
+                }
+            ]
+        }
+
 
 class FakeLambdaClient:
     def __init__(self, allow: bool | None = True) -> None:
@@ -233,6 +283,7 @@ class FakeSqsClient:
                 "QueueArn": f"arn:aws:sqs:eu-west-2:123456789012:{queue_name}",
                 "ApproximateNumberOfMessages": self.messages,
                 "ApproximateNumberOfMessagesNotVisible": "1",
+                "KmsMasterKeyId": "alias/dev-rule-dlq",
                 "Policy": json.dumps(
                     {
                         "Statement": {
@@ -372,6 +423,7 @@ class FakeRuntime:
         ssm: FakeSsmClient | None = None,
         kms: FakeKmsClient | None = None,
         cloudwatch: FakeCloudWatchClient | None = None,
+        scheduler: FakeSchedulerClient | None = None,
     ) -> None:
         self.config = AwsSafeConfig(allowed_account_ids=["123456789012"])
         self.region = "eu-west-2"
@@ -387,6 +439,7 @@ class FakeRuntime:
         self.ssm = ssm or FakeSsmClient()
         self.kms = kms or FakeKmsClient()
         self.cloudwatch = cloudwatch or FakeCloudWatchClient()
+        self.scheduler = scheduler or FakeSchedulerClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
         assert region in {"eu-west-2", None}
@@ -412,6 +465,8 @@ class FakeRuntime:
             return self.kms
         if service_name == "cloudwatch":
             return self.cloudwatch
+        if service_name == "scheduler":
+            return self.scheduler
         raise AssertionError(service_name)
 
     def require_identity(self) -> FakeIdentity:
@@ -436,6 +491,21 @@ def test_list_eventbridge_rules_lists_buses_rules_and_target_summaries() -> None
     assert result["rules"][1]["schedule_expression"] == "rate(5 minutes)"
     assert result["rules"][1]["managed_by"] == "events.amazonaws.com"
     assert runtime.events.bus_requests == [{"Limit": 10}, {"Limit": 9, "NextToken": "bus-page-2"}]
+
+
+def test_get_eventbridge_time_sources_returns_schedules_archives_and_replays() -> None:
+    result = get_eventbridge_time_sources(FakeRuntime(), max_results=10)
+
+    assert result["summary"] == {
+        "scheduled_rule_count": 1,
+        "scheduler_schedule_count": 1,
+        "archive_count": 1,
+        "replay_count": 1,
+    }
+    assert result["scheduled_rules"][0]["schedule_expression"] == "rate(5 minutes)"
+    assert result["scheduler_schedules"][0]["schedule_expression"] == "cron(0 0 * * ? *)"
+    assert result["archives"][0]["retention_days"] == 7
+    assert result["replays"][0]["state"] == "COMPLETED"
 
 
 def test_explain_eventbridge_rule_dependencies_returns_graph_and_permission_checks() -> None:
@@ -512,7 +582,32 @@ def test_investigate_eventbridge_rule_delivery_combines_metrics_and_dlq_state() 
     assert result["metrics"]["available"] is True
     assert result["signals"]["has_failed_invocations"] is True
     assert result["signals"]["dlq_visible_messages"] == 3
+    assert result["signal_groups"]["metrics"] == [
+        "failed_invocations",
+        "visible_dlq_messages",
+    ]
+    lambda_target = next(
+        item for item in result["target_diagnostics"] if item["target_id"] == "lambda"
+    )
+    assert lambda_target["retry_policy"] == {
+        "MaximumRetryAttempts": 2,
+        "MaximumEventAgeInSeconds": 3600,
+    }
+    assert lambda_target["dead_letter_queue"]["approximate_number_of_messages"] == 3
+    assert lambda_target["permission_decision"] == "allowed"
     assert "failed delivery" in result["diagnostic_summary"]
+    assert result["readiness_summary"] == {
+        "status": "needs_attention",
+        "blockers": [],
+        "cautions": [
+            "target_permission_unknown",
+            "failed_invocations",
+            "dlq_activity",
+            "targets_without_dlq",
+        ],
+        "target_count": 3,
+        "targets_without_dlq": ["sfn", "unsupported"],
+    }
     assert any("DLQ" in check for check in result["suggested_next_checks"])
 
 
@@ -524,6 +619,33 @@ def test_investigate_eventbridge_rule_delivery_keeps_metrics_failures_non_fatal(
 
     assert result["metrics"]["available"] is False
     assert result["warnings"]
+
+
+def test_audit_eventbridge_target_retry_dlq_safety_flags_silent_drop_edges() -> None:
+    result = audit_eventbridge_target_retry_dlq_safety(
+        FakeRuntime(),
+        "dev-orders",
+        since_minutes=30,
+    )
+
+    assert result["summary"] == {
+        "status": "silent_drop_risk",
+        "target_count": 3,
+        "risk_count": 4,
+        "caution_count": 3,
+        "targets_with_silent_drop_risk": ["sfn", "unsupported"],
+    }
+    lambda_target = next(item for item in result["target_safety"] if item["target_id"] == "lambda")
+    assert lambda_target["dead_letter_queue"]["policy_allows_eventbridge"] is True
+    assert lambda_target["dead_letter_queue"]["kms_master_key_id"] == "alias/dev-rule-dlq"
+    assert lambda_target["retry_policy"] == {
+        "maximum_retry_attempts": 2,
+        "maximum_event_age_seconds": 3600,
+        "defaulted": False,
+    }
+    assert "target_without_dlq" in result["signals"]["risks"]
+    assert result["metrics"]["failed_invocations"]["sum"] == 1.0
+    assert any("DLQs" in check for check in result["suggested_next_checks"])
 
 
 def test_investigate_eventbridge_rule_delivery_handles_disabled_rule_without_targets() -> None:
