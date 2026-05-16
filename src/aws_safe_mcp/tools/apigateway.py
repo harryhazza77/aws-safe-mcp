@@ -174,6 +174,11 @@ def investigate_api_gateway_route(
         if isinstance(lambda_policy, dict)
         else None
     )
+    callability_signals = _api_lambda_callability_signals(
+        route,
+        permission_allowed,
+        lambda_context,
+    )
     return {
         "api_id": api_id,
         "api_type": dependencies.get("api_type"),
@@ -186,8 +191,10 @@ def investigate_api_gateway_route(
         },
         "lambda_permission": lambda_policy,
         "lambda": lambda_context,
+        "callability_signals": callability_signals,
         "warnings": warnings,
         "diagnostic_summary": _route_diagnostic_summary(route, permission_allowed, lambda_context),
+        "callability_summary": _api_lambda_callability_summary(callability_signals),
         "suggested_next_checks": _route_suggested_next_checks(
             route,
             permission_allowed,
@@ -994,6 +1001,55 @@ def _route_diagnostic_summary(
     if route.get("lambda_function_arn"):
         return "Route targets Lambda and no immediate permission or error signal was found."
     return "Route uses a non-Lambda integration; inspect integration target health."
+
+
+def _api_lambda_callability_signals(
+    route: dict[str, Any],
+    permission_allowed: bool | None,
+    lambda_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    lambda_summary = lambda_context.get("summary") if isinstance(lambda_context, dict) else None
+    return {
+        "route_has_lambda_target": bool(route.get("lambda_function_arn")),
+        "integration_available": route.get("integration_available"),
+        "lambda_permission_allows_invoke": permission_allowed,
+        "lambda_config_available": lambda_summary is not None,
+        "lambda_active": (
+            lambda_summary.get("state") == "Active" if isinstance(lambda_summary, dict) else None
+        ),
+        "lambda_update_successful": (
+            lambda_summary.get("last_update_status") == "Successful"
+            if isinstance(lambda_summary, dict)
+            else None
+        ),
+        "lambda_timeout_seconds": (
+            lambda_summary.get("timeout") if isinstance(lambda_summary, dict) else None
+        ),
+        "recent_lambda_error_count": (
+            lambda_context.get("recent_error_count") if isinstance(lambda_context, dict) else None
+        ),
+    }
+
+
+def _api_lambda_callability_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    blockers = []
+    if not signals["route_has_lambda_target"]:
+        blockers.append("route_does_not_target_lambda")
+    if signals["integration_available"] is False:
+        blockers.append("integration_unavailable")
+    if signals["lambda_permission_allows_invoke"] is False:
+        blockers.append("lambda_resource_policy_denies_apigateway")
+    if signals["lambda_config_available"] is False:
+        blockers.append("lambda_config_unavailable")
+    if signals["lambda_active"] is False:
+        blockers.append("lambda_not_active")
+    if signals["lambda_update_successful"] is False:
+        blockers.append("lambda_update_not_successful")
+    return {
+        "status": "blocked" if blockers else "likely_callable",
+        "blockers": blockers,
+        "recent_lambda_error_count": signals.get("recent_lambda_error_count"),
+    }
 
 
 def _route_suggested_next_checks(

@@ -339,6 +339,13 @@ def test_investigate_api_gateway_route_reports_lambda_permission_and_errors() ->
     assert result["diagnostic_summary"] == (
         "Route targets Lambda and recent Lambda error signals were found."
     )
+    assert result["callability_summary"] == {
+        "status": "likely_callable",
+        "blockers": [],
+        "recent_lambda_error_count": 1,
+    }
+    assert result["callability_signals"]["lambda_permission_allows_invoke"] is True
+    assert result["callability_signals"]["lambda_active"] is True
     assert any("Lambda errors" in check for check in result["suggested_next_checks"])
 
 

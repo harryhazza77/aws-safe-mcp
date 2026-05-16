@@ -585,7 +585,9 @@ Inputs:
 Diagnoses one API Gateway route without invoking it. The tool finds the route,
 summarizes its integration, checks Lambda invoke permission when the target is
 Lambda, returns safe Lambda configuration metadata, and groups recent Lambda
-error log signals.
+error log signals. It also returns callability signals and blockers from
+integration availability, Lambda resource policy, Lambda state/update status,
+timeout, and recent Lambda error count.
 
 Inputs:
 

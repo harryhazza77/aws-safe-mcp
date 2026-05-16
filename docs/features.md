@@ -130,6 +130,9 @@ Related tools:
   to allow API Gateway invoke.
 - Diagnose one route with integration details, Lambda invoke permission, Lambda
   configuration, and recent Lambda error signals.
+- Report explicit API Gateway-to-Lambda callability signals and blockers from
+  integration availability, Lambda resource policy, Lambda state/update status,
+  timeout, and recent error count.
 - Report route and integration warnings without returning raw Lambda policies.
 
 Related tools:
