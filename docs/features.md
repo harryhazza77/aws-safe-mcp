@@ -219,6 +219,9 @@ Related tools:
 - Check SQS-to-Lambda delivery readiness, including event source mapping state,
   Lambda timeout vs queue visibility timeout, batch partial-failure response,
   redrive policy, and scaling/failure destination hints.
+- Investigate SQS backlog stalls by correlating queue depth and age, Lambda
+  mappings, visibility timeout, DLQ redrive, partial batch response, and Lambda
+  throttles without receiving messages.
 - List SNS topics and summarize topic metadata without publishing messages.
 - Inspect SNS display name, encryption shape, delivery-policy presence, topic
   policy statement count, and bounded safe subscription endpoint summaries.
@@ -237,6 +240,7 @@ Related tools:
 - `get_sqs_queue_summary`
 - `explain_sqs_queue_dependencies`
 - `check_sqs_to_lambda_delivery`
+- `investigate_sqs_backlog_stall`
 - `list_sns_topics`
 - `get_sns_topic_summary`
 - `explain_sns_topic_dependencies`

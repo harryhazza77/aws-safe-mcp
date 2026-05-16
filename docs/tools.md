@@ -512,6 +512,20 @@ Inputs:
 - `region` optional
 - `max_results` optional
 
+### `investigate_sqs_backlog_stall`
+
+Correlates SQS backlog signals with Lambda event source mappings and recent
+Lambda throttles. The result includes approximate queue depth and oldest-message
+age, mapping state, visibility-timeout fit, DLQ/redrive and partial-batch
+signals, the first likely bottleneck, and suggested next checks. It does not
+receive messages or return message bodies.
+
+Inputs:
+
+- `queue_url` required
+- `region` optional
+- `max_results` optional
+
 ## SNS
 
 ### `list_sns_topics`

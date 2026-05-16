@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -89,6 +90,7 @@ def get_sqs_queue_summary(
             "available": _int_attribute(attributes, "ApproximateNumberOfMessages"),
             "in_flight": _int_attribute(attributes, "ApproximateNumberOfMessagesNotVisible"),
             "delayed": _int_attribute(attributes, "ApproximateNumberOfMessagesDelayed"),
+            "oldest_age_seconds": _int_attribute(attributes, "ApproximateAgeOfOldestMessage"),
         },
         "dead_letter": _dead_letter_summary(attributes),
         "encryption": _encryption_summary(attributes),
@@ -167,6 +169,49 @@ def explain_sqs_queue_dependencies(
             permission_checks=permission_checks,
             warnings=warnings,
         ),
+    }
+
+
+def investigate_sqs_backlog_stall(
+    runtime: AwsRuntime,
+    queue_url: str,
+    region: str | None = None,
+    max_results: int | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    queue = get_sqs_queue_summary(runtime, queue_url, region=resolved_region)
+    queue_arn = queue.get("queue_arn")
+    if not isinstance(queue_arn, str) or not queue_arn:
+        raise ToolInputError("queue does not expose QueueArn")
+    limit = clamp_limit(
+        max_results,
+        default=20,
+        configured_max=runtime.config.max_results,
+        label="max_results",
+    )
+    warnings: list[str] = []
+    mappings = _lambda_mappings_for_queue(runtime, resolved_region, queue_arn, limit, warnings)
+    diagnostics = [
+        _sqs_lambda_mapping_delivery_diagnostic(runtime, resolved_region, queue, mapping, warnings)
+        for mapping in mappings
+    ]
+    throttles = [
+        _lambda_throttle_signal(runtime, resolved_region, diagnostic, warnings)
+        for diagnostic in diagnostics
+    ]
+    signals = _sqs_backlog_stall_signals(queue, diagnostics, throttles)
+    return {
+        "queue_url": queue["queue_url"],
+        "queue_name": queue["queue_name"],
+        "queue_arn": queue_arn,
+        "region": resolved_region,
+        "summary": _sqs_backlog_stall_summary(signals),
+        "queue": queue,
+        "lambda_mappings": diagnostics,
+        "lambda_throttle_signals": throttles,
+        "signals": signals,
+        "suggested_next_checks": _sqs_backlog_stall_next_checks(signals),
+        "warnings": warnings,
     }
 
 
@@ -526,6 +571,123 @@ def _sqs_lambda_delivery_next_checks(signals: dict[str, Any]) -> list[str]:
         checks.append("Configure a DLQ/redrive policy for poison messages.")
     if not checks:
         checks.append("No obvious static SQS-to-Lambda delivery blocker found.")
+    return checks
+
+
+def _lambda_throttle_signal(
+    runtime: AwsRuntime,
+    region: str,
+    diagnostic: dict[str, Any],
+    warnings: list[str],
+) -> dict[str, Any]:
+    function_name = str(diagnostic.get("function_name") or "")
+    if not function_name:
+        return {"function_name": None, "throttles_last_hour": None}
+    try:
+        cloudwatch = runtime.client("cloudwatch", region=region)
+        end = datetime.now(UTC)
+        start = end - timedelta(hours=1)
+        response = cloudwatch.get_metric_data(
+            MetricDataQueries=[
+                {
+                    "Id": "throttles",
+                    "MetricStat": {
+                        "Metric": {
+                            "Namespace": "AWS/Lambda",
+                            "MetricName": "Throttles",
+                            "Dimensions": [{"Name": "FunctionName", "Value": function_name}],
+                        },
+                        "Period": 300,
+                        "Stat": "Sum",
+                    },
+                    "ReturnData": True,
+                }
+            ],
+            StartTime=start,
+            EndTime=end,
+        )
+    except Exception as exc:  # noqa: BLE001 - stall analysis is best-effort
+        warnings.append(f"cloudwatch lambda throttles unavailable for {function_name}: {exc}")
+        return {"function_name": function_name, "throttles_last_hour": None}
+    values = [
+        float(value)
+        for item in response.get("MetricDataResults", [])
+        for value in item.get("Values", [])
+    ]
+    return {"function_name": function_name, "throttles_last_hour": sum(values)}
+
+
+def _sqs_backlog_stall_signals(
+    queue: dict[str, Any],
+    diagnostics: list[dict[str, Any]],
+    throttles: list[dict[str, Any]],
+) -> dict[str, Any]:
+    counts = queue.get("message_counts") or {}
+    available = int(counts.get("available") or 0)
+    in_flight = int(counts.get("in_flight") or 0)
+    oldest_age = int(counts.get("oldest_age_seconds") or 0)
+    risks = [risk for diagnostic in diagnostics for risk in diagnostic["delivery_risks"]]
+    if available > 0 and not diagnostics:
+        risks.append("messages_available_but_no_lambda_mapping")
+    if oldest_age >= 300:
+        risks.append("oldest_message_age_high")
+    if any((item.get("throttles_last_hour") or 0) > 0 for item in throttles):
+        risks.append("lambda_throttles_observed")
+    return {
+        "available_messages": available,
+        "in_flight_messages": in_flight,
+        "oldest_message_age_seconds": oldest_age,
+        "mapping_count": len(diagnostics),
+        "enabled_mapping_count": sum(
+            1
+            for diagnostic in diagnostics
+            if str(diagnostic.get("state") or "").lower() == "enabled"
+        ),
+        "risk_count": len(risks),
+        "risks": sorted(set(risks)),
+    }
+
+
+def _sqs_backlog_stall_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    first = _first_sqs_backlog_bottleneck(signals["risks"])
+    return {
+        "status": "stall_signals_detected" if signals["risk_count"] else "no_stall_signals",
+        "first_likely_bottleneck": first,
+        "risk_count": signals["risk_count"],
+    }
+
+
+def _first_sqs_backlog_bottleneck(risks: list[str]) -> str | None:
+    priority = [
+        "messages_available_but_no_lambda_mapping",
+        "event_source_mapping_not_enabled",
+        "lambda_throttles_observed",
+        "visibility_timeout_too_low_for_lambda_timeout",
+        "oldest_message_age_high",
+        "partial_batch_response_not_enabled",
+        "queue_redrive_not_configured",
+    ]
+    risk_set = set(risks)
+    for risk in priority:
+        if risk in risk_set:
+            return risk
+    return risks[0] if risks else None
+
+
+def _sqs_backlog_stall_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if "messages_available_but_no_lambda_mapping" in signals["risks"]:
+        checks.append("Create or enable a Lambda event source mapping for the queue.")
+    if "event_source_mapping_not_enabled" in signals["risks"]:
+        checks.append("Enable or repair disabled Lambda event source mappings.")
+    if "oldest_message_age_high" in signals["risks"]:
+        checks.append("Inspect queue age/backlog and consumer throughput.")
+    if "lambda_throttles_observed" in signals["risks"]:
+        checks.append("Inspect Lambda concurrency limits and throttles.")
+    if "visibility_timeout_too_low_for_lambda_timeout" in signals["risks"]:
+        checks.append("Increase visibility timeout or reduce Lambda timeout.")
+    if not checks:
+        checks.append("No static SQS backlog stall signal found.")
     return checks
 
 

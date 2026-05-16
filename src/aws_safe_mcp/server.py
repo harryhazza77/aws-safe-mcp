@@ -140,8 +140,15 @@ from aws_safe_mcp.tools.sqs import (
 from aws_safe_mcp.tools.sqs import (
     explain_sqs_queue_dependencies as explain_sqs_queue_dependencies_tool,
 )
-from aws_safe_mcp.tools.sqs import get_sqs_queue_summary as get_sqs_queue_summary_tool
-from aws_safe_mcp.tools.sqs import list_sqs_queues as list_sqs_queues_tool
+from aws_safe_mcp.tools.sqs import (
+    get_sqs_queue_summary as get_sqs_queue_summary_tool,
+)
+from aws_safe_mcp.tools.sqs import (
+    investigate_sqs_backlog_stall as investigate_sqs_backlog_stall_tool,
+)
+from aws_safe_mcp.tools.sqs import (
+    list_sqs_queues as list_sqs_queues_tool,
+)
 from aws_safe_mcp.tools.stepfunctions import (
     explain_step_function_dependencies as explain_step_function_dependencies_tool,
 )
@@ -705,6 +712,21 @@ def _register_sqs_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
     ) -> dict[str, object]:
         """Check SQS-to-Lambda event source mapping delivery readiness."""
         return check_sqs_to_lambda_delivery_tool(
+            runtime,
+            queue_url=queue_url,
+            region=region,
+            max_results=max_results,
+        )
+
+    @mcp.tool()
+    @audit.tool("investigate_sqs_backlog_stall")
+    def investigate_sqs_backlog_stall(
+        queue_url: str,
+        region: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """Correlate SQS backlog, Lambda mappings, visibility timeout, DLQ, and throttles."""
+        return investigate_sqs_backlog_stall_tool(
             runtime,
             queue_url=queue_url,
             region=region,

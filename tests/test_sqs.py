@@ -11,6 +11,7 @@ from aws_safe_mcp.tools.sqs import (
     check_sqs_to_lambda_delivery,
     explain_sqs_queue_dependencies,
     get_sqs_queue_summary,
+    investigate_sqs_backlog_stall,
     list_sqs_queues,
 )
 
@@ -41,6 +42,7 @@ class FakeSqsClient:
                 "ApproximateNumberOfMessages": "4",
                 "ApproximateNumberOfMessagesNotVisible": "1",
                 "ApproximateNumberOfMessagesDelayed": "2",
+                "ApproximateAgeOfOldestMessage": "600",
                 "RedrivePolicy": (
                     '{"deadLetterTargetArn":"arn:aws:sqs:eu-west-2:123456789012:dev-dlq",'
                     '"maxReceiveCount":"5"}'
@@ -58,6 +60,7 @@ class FakeRuntime:
         self.sqs_client = FakeSqsClient()
         self.events_client = FakeEventsClient()
         self.lambda_client = FakeLambdaClient()
+        self.cloudwatch_client = FakeCloudWatchClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
         assert region == "eu-west-2"
@@ -67,6 +70,8 @@ class FakeRuntime:
             return self.events_client
         if service_name == "lambda":
             return self.lambda_client
+        if service_name == "cloudwatch":
+            return self.cloudwatch_client
         raise AssertionError(f"unexpected service {service_name}")
 
 
@@ -116,6 +121,11 @@ class FakeLambdaClient:
         return {"Timeout": 5}
 
 
+class FakeCloudWatchClient:
+    def get_metric_data(self, **_: Any) -> dict[str, Any]:
+        return {"MetricDataResults": [{"Id": "throttles", "Values": [2.0]}]}
+
+
 def test_list_sqs_queues_returns_bounded_metadata() -> None:
     runtime = FakeRuntime()
 
@@ -148,7 +158,12 @@ def test_get_sqs_queue_summary_returns_attributes_without_receiving_messages() -
     assert result["queue_url"] == queue_url
     assert result["queue_arn"] == "arn:aws:sqs:eu-west-2:123456789012:dev-work"
     assert result["visibility_timeout_seconds"] == 30
-    assert result["message_counts"] == {"available": 4, "in_flight": 1, "delayed": 2}
+    assert result["message_counts"] == {
+        "available": 4,
+        "in_flight": 1,
+        "delayed": 2,
+        "oldest_age_seconds": 600,
+    }
     assert result["dead_letter"] == {
         "configured": True,
         "dead_letter_target_arn": "arn:aws:sqs:eu-west-2:123456789012:dev-dlq",
@@ -243,6 +258,29 @@ def test_check_sqs_to_lambda_delivery_flags_timeout_and_batch_risks() -> None:
     assert result["signals"]["risks"] == [
         "partial_batch_response_not_enabled",
         "visibility_timeout_too_low_for_lambda_timeout",
+    ]
+
+
+def test_investigate_sqs_backlog_stall_correlates_queue_lambda_and_metrics() -> None:
+    result = investigate_sqs_backlog_stall(
+        FakeRuntime(),
+        "https://sqs.eu-west-2.amazonaws.com/123456789012/dev-work",
+    )
+
+    assert result["summary"] == {
+        "status": "stall_signals_detected",
+        "first_likely_bottleneck": "lambda_throttles_observed",
+        "risk_count": 2,
+    }
+    assert result["signals"]["available_messages"] == 4
+    assert result["signals"]["oldest_message_age_seconds"] == 600
+    assert result["signals"]["risks"] == [
+        "lambda_throttles_observed",
+        "oldest_message_age_high",
+    ]
+    assert result["lambda_mappings"][0]["partial_batch_response_enabled"] is True
+    assert result["lambda_throttle_signals"] == [
+        {"function_name": "dev-handler", "throttles_last_hour": 2.0}
     ]
 
 
