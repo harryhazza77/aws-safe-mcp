@@ -230,6 +230,9 @@ Related tools:
 - List DynamoDB table names without scanning, querying, or reading items.
 - Summarize DynamoDB table metadata such as billing mode, keys, indexes,
   streams, server-side encryption, and point-in-time recovery.
+- Check DynamoDB stream-to-Lambda readiness, including stream status, event
+  source mapping settings, partial failure support, failure destinations, and
+  role permissions without reading stream records or table items.
 - List SQS queues and summarize queue metadata without receiving messages.
 - Inspect queue timing attributes, approximate message counts, DLQ/redrive
   configuration, encryption shape, and queue policy statement count.
@@ -256,6 +259,7 @@ Related tools:
 - `get_s3_bucket_summary`
 - `list_dynamodb_tables`
 - `dynamodb_table_summary`
+- `check_dynamodb_stream_lambda_readiness`
 - `list_sqs_queues`
 - `get_sqs_queue_summary`
 - `explain_sqs_queue_dependencies`

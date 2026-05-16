@@ -98,6 +98,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "explain_sns_topic_dependencies",
         "list_dynamodb_tables",
         "dynamodb_table_summary",
+        "check_dynamodb_stream_lambda_readiness",
         "list_ecs_clusters",
         "list_ecs_services",
         "get_ecs_service_summary",

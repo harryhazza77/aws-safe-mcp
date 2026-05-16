@@ -36,6 +36,9 @@ from aws_safe_mcp.tools.cloudwatch import (
     list_cloudwatch_log_groups as list_cloudwatch_log_groups_tool,
 )
 from aws_safe_mcp.tools.dynamodb import (
+    check_dynamodb_stream_lambda_readiness as check_dynamodb_stream_lambda_readiness_tool,
+)
+from aws_safe_mcp.tools.dynamodb import (
     dynamodb_table_summary as dynamodb_table_summary_tool,
 )
 from aws_safe_mcp.tools.dynamodb import list_dynamodb_tables as list_dynamodb_tables_tool
@@ -717,6 +720,21 @@ def _register_dynamodb_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRunti
             runtime,
             table_name=table_name,
             region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("check_dynamodb_stream_lambda_readiness")
+    def check_dynamodb_stream_lambda_readiness(
+        table_name: str,
+        region: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """Check DynamoDB stream-to-Lambda readiness without reading records."""
+        return check_dynamodb_stream_lambda_readiness_tool(
+            runtime,
+            table_name=table_name,
+            region=region,
+            max_results=max_results,
         )
 
 

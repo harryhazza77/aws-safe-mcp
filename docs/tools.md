@@ -466,6 +466,20 @@ Inputs:
 - `table_name` required
 - `region` optional
 
+### `check_dynamodb_stream_lambda_readiness`
+
+Checks whether a DynamoDB stream appears ready for Lambda consumption. It
+summarizes stream status, Lambda event source mapping state, batch/window
+settings, bisect and partial batch support, starting position, retry age,
+failure destination, and simulated role permissions. It does not read stream
+records, DynamoDB items, or raw IAM policy documents.
+
+Inputs:
+
+- `table_name` required
+- `region` optional
+- `max_results` optional
+
 ## ECS
 
 ### `list_ecs_clusters`
