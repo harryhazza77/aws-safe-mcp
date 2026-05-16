@@ -327,6 +327,9 @@ Related tools:
   failure point without payloads, full log streams, or secret values.
 - Plan an end-to-end transaction trace from a seed resource, ordered across
   API Gateway, EventBridge, Step Functions, Lambda, SQS, DynamoDB, and S3.
+- Export a redacted application dependency graph from discovered resources and
+  existing dependency edges, including confidence and unresolved hints without
+  raw policies or secret values.
 - Produce a risk-scored dependency health summary for an application prefix
   using discovered resources and service-specific follow-up risks.
 
@@ -339,6 +342,7 @@ Related tools:
 - `build_log_signal_correlation_timeline`
 - `plan_end_to_end_transaction_trace`
 - `get_risk_scored_dependency_health_summary`
+- `export_application_dependency_graph`
 
 ## Local Emulator Workflows
 

@@ -12,6 +12,7 @@ from aws_safe_mcp.tools import resource_search
 from aws_safe_mcp.tools.resource_search import (
     build_log_signal_correlation_timeline,
     diagnose_region_partition_mismatches,
+    export_application_dependency_graph,
     get_cross_service_incident_brief,
     get_risk_scored_dependency_health_summary,
     plan_end_to_end_transaction_trace,
@@ -281,6 +282,28 @@ def test_build_log_signal_correlation_timeline_orders_alarm_and_lambda_signals(
     }
     assert result["timeline"][0]["name"] == "dev-api-errors"
     assert result["timeline"][1]["source"] == "lambda_logs"
+
+
+def test_export_application_dependency_graph_uses_discovered_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_search(*_: Any, **__: Any) -> dict[str, Any]:
+        return {
+            "results": [{"service": "lambda", "name": "dev-api", "arn": "lambda-arn"}],
+            "warnings": [],
+        }
+
+    def fake_dependencies(*_: Any, **__: Any) -> dict[str, Any]:
+        return {"edges": [{"source": "lambda-arn", "target": "log-group"}]}
+
+    monkeypatch.setattr(resource_search, "search_aws_resources", fake_search)
+    monkeypatch.setattr(resource_search, "explain_lambda_dependencies", fake_dependencies)
+
+    result = export_application_dependency_graph(FakeRuntime(), "dev")
+
+    assert result["summary"] == {"node_count": 1, "edge_count": 1, "unresolved_count": 0}
+    assert result["nodes"][0]["id"] == "lambda-arn"
+    assert result["edges"][0]["target"] == "log-group"
 
 
 def test_plan_end_to_end_transaction_trace_orders_probable_path(

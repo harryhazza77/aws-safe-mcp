@@ -136,6 +136,9 @@ from aws_safe_mcp.tools.resource_search import (
     diagnose_region_partition_mismatches as diagnose_region_partition_mismatches_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
+    export_application_dependency_graph as export_application_dependency_graph_tool,
+)
+from aws_safe_mcp.tools.resource_search import (
     get_cross_service_incident_brief as get_cross_service_incident_brief_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
@@ -1395,6 +1398,21 @@ def _register_search_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
     ) -> dict[str, object]:
         """Score discovered application resources for dependency health risks."""
         return get_risk_scored_dependency_health_summary_tool(
+            runtime,
+            application_prefix=application_prefix,
+            region=region,
+            max_matches=max_matches,
+        )
+
+    @mcp.tool()
+    @audit.tool("export_application_dependency_graph")
+    def export_application_dependency_graph(
+        application_prefix: str,
+        region: str | None = None,
+        max_matches: int | None = None,
+    ) -> dict[str, object]:
+        """Export a redacted application dependency graph from safe discovery."""
+        return export_application_dependency_graph_tool(
             runtime,
             application_prefix=application_prefix,
             region=region,

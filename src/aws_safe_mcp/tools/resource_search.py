@@ -239,6 +239,49 @@ def get_risk_scored_dependency_health_summary(
     }
 
 
+def export_application_dependency_graph(
+    runtime: AwsRuntime,
+    application_prefix: str,
+    region: str | None = None,
+    max_matches: int | None = None,
+) -> dict[str, Any]:
+    prefix = application_prefix.strip()
+    if not prefix:
+        raise ToolInputError("application_prefix is required")
+    resources = search_aws_resources(runtime, prefix, region=region, max_results=max_matches)
+    warnings = list(resources.get("warnings", []))
+    nodes = [_application_graph_node(item) for item in resources.get("results", [])]
+    edges: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    for item in resources.get("results", []):
+        if item.get("service") != "lambda":
+            continue
+        try:
+            dependencies = explain_lambda_dependencies(
+                runtime,
+                str(item.get("name")),
+                region=region,
+                include_permission_checks=False,
+            )
+            edges.extend(dependencies.get("edges", []))
+        except Exception as exc:  # noqa: BLE001 - graph export is best-effort
+            unresolved.append({"resource": item.get("name"), "reason": str(exc)})
+    return {
+        "application_prefix": prefix,
+        "region": region or runtime.region,
+        "nodes": nodes,
+        "edges": edges,
+        "confidence": "inferred_from_safe_discovery",
+        "unresolved_hints": unresolved,
+        "summary": {
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "unresolved_count": len(unresolved),
+        },
+        "warnings": warnings,
+    }
+
+
 def diagnose_region_partition_mismatches(
     runtime: AwsRuntime,
     resource_refs: list[str],
@@ -474,6 +517,16 @@ def _resource_health_score(item: dict[str, Any]) -> dict[str, Any]:
         "arn": item.get("arn"),
         "score": score,
         "risks": risks,
+    }
+
+
+def _application_graph_node(resource: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": resource.get("arn") or resource.get("name"),
+        "name": resource.get("name"),
+        "service": resource.get("service"),
+        "resource_type": resource.get("resource_type"),
+        "summary": resource.get("summary", {}),
     }
 
 

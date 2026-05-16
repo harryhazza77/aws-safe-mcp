@@ -1025,3 +1025,16 @@ Inputs:
 - `application_prefix` required
 - `region` optional
 - `max_matches` optional
+
+### `export_application_dependency_graph`
+
+Exports a redacted dependency graph for resources matching an application
+prefix. It uses safe discovery results and existing dependency edges where
+available, returning nodes, edges, confidence, and unresolved hints without raw
+policies or secret values.
+
+Inputs:
+
+- `application_prefix` required
+- `region` optional
+- `max_matches` optional
