@@ -176,6 +176,50 @@ def explain_sns_topic_dependencies(
     }
 
 
+def audit_sns_fanout_delivery_readiness(
+    runtime: AwsRuntime,
+    topic_arn: str,
+    region: str | None = None,
+    max_results: int | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    limit = clamp_limit(
+        max_results,
+        default=20,
+        configured_max=runtime.config.max_results,
+        label="max_results",
+    )
+    dependencies = explain_sns_topic_dependencies(
+        runtime,
+        topic_arn=topic_arn,
+        region=resolved_region,
+        max_permission_checks=limit,
+    )
+    topic = dependencies["nodes"]["topic"]
+    subscription_audits = _sns_subscription_fanout_audits(
+        dependencies["nodes"]["subscriptions"],
+        dependencies["permission_checks"],
+    )
+    signals = _sns_fanout_readiness_signals(topic, subscription_audits)
+    return {
+        "topic_arn": dependencies["topic_arn"],
+        "topic_name": dependencies["topic_name"],
+        "region": resolved_region,
+        "summary": _sns_fanout_readiness_summary(signals),
+        "topic": {
+            "fifo": topic.get("fifo"),
+            "encrypted": bool((topic.get("encryption") or {}).get("kms_master_key_id")),
+            "kms_master_key_id": (topic.get("encryption") or {}).get("kms_master_key_id"),
+            "delivery_policy_available": (topic.get("delivery_policy") or {}).get("available"),
+            "policy": topic.get("policy"),
+        },
+        "subscription_audits": subscription_audits,
+        "signals": signals,
+        "suggested_next_checks": _sns_fanout_next_checks(signals),
+        "warnings": dependencies.get("warnings", []),
+    }
+
+
 def require_sns_topic_arn(topic_arn: str) -> str:
     value = topic_arn.strip()
     if not value:
@@ -396,6 +440,93 @@ def _sns_permission_hints(
                 }
             )
     return hints
+
+
+def _sns_subscription_fanout_audits(
+    subscriptions: list[dict[str, Any]],
+    permission_checks: dict[str, Any],
+) -> list[dict[str, Any]]:
+    checks_by_resource = {
+        str(check.get("resource")): check
+        for check in permission_checks.get("checks", [])
+        if check.get("resource")
+    }
+    audits = []
+    for subscription in subscriptions:
+        endpoint = subscription.get("endpoint") or {}
+        endpoint_arn = endpoint.get("arn")
+        check = checks_by_resource.get(str(endpoint_arn))
+        risks = []
+        if subscription.get("subscription_arn") == "PendingConfirmation":
+            risks.append("pending_confirmation")
+        if subscription.get("protocol") in {"lambda", "sqs", "http", "https"} and not (
+            subscription.get("dead_letter")
+        ):
+            risks.append("subscription_without_dlq")
+        if check and check.get("decision") in {"denied", "explicit_deny"}:
+            risks.append("delivery_policy_denied")
+        if check and check.get("decision") == "unknown":
+            risks.append("delivery_policy_unknown")
+        audits.append(
+            {
+                "subscription_arn": subscription.get("subscription_arn"),
+                "protocol": subscription.get("protocol"),
+                "endpoint": endpoint,
+                "dead_letter": subscription.get("dead_letter"),
+                "permission_decision": check.get("decision") if check else None,
+                "risks": risks,
+            }
+        )
+    return audits
+
+
+def _sns_fanout_readiness_signals(
+    topic: dict[str, Any],
+    audits: list[dict[str, Any]],
+) -> dict[str, Any]:
+    risks = [risk for audit in audits for risk in audit["risks"]]
+    protocol_mix = sorted({str(audit.get("protocol")) for audit in audits})
+    if (topic.get("encryption") or {}).get("kms_master_key_id"):
+        risks.append("encrypted_topic_kms_hint")
+    return {
+        "subscription_count": len(audits),
+        "protocol_mix": protocol_mix,
+        "weak_fanout_edges": [
+            audit.get("subscription_arn") or audit.get("protocol")
+            for audit in audits
+            if audit["risks"]
+        ],
+        "risk_count": len(risks),
+        "risks": sorted(set(risks)),
+    }
+
+
+def _sns_fanout_readiness_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "weak_edges_found" if signals["weak_fanout_edges"] else "ready",
+        "subscription_count": signals["subscription_count"],
+        "weak_edge_count": len(signals["weak_fanout_edges"]),
+        "risk_count": signals["risk_count"],
+        "protocol_mix": signals["protocol_mix"],
+    }
+
+
+def _sns_fanout_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if "pending_confirmation" in signals["risks"]:
+        checks.append("Confirm pending subscriptions before relying on fanout delivery.")
+    if "subscription_without_dlq" in signals["risks"]:
+        checks.append("Consider subscription DLQs for Lambda, SQS, and HTTP fanout edges.")
+    if (
+        "delivery_policy_denied" in signals["risks"]
+        or "delivery_policy_unknown" in signals["risks"]
+    ):
+        checks.append("Review downstream Lambda/SQS policies that trust sns.amazonaws.com.")
+    if "encrypted_topic_kms_hint" in signals["risks"]:
+        checks.append("Confirm KMS permissions for encrypted-topic publishers and subscribers.")
+    if not checks:
+        checks.append("No SNS fanout delivery readiness blocker found.")
+    return checks
 
 
 def _sns_permission_checks(

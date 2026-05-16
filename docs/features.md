@@ -254,6 +254,9 @@ Related tools:
 - Explain SNS topic dependencies, including subscriptions, downstream
   Lambda/SQS/HTTP targets, subscription DLQs where visible, and inferred
   delivery permission checks.
+- Audit SNS fanout delivery readiness across subscriptions, protocol mix,
+  subscription DLQs, encrypted-topic KMS hints, and downstream policy trust
+  without publishing messages or returning raw topic policies.
 
 Related tools:
 
@@ -272,6 +275,7 @@ Related tools:
 - `list_sns_topics`
 - `get_sns_topic_summary`
 - `explain_sns_topic_dependencies`
+- `audit_sns_fanout_delivery_readiness`
 
 ## Logs And Failure Signals
 

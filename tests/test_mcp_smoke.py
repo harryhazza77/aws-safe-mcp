@@ -97,6 +97,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "list_sns_topics",
         "get_sns_topic_summary",
         "explain_sns_topic_dependencies",
+        "audit_sns_fanout_delivery_readiness",
         "list_dynamodb_tables",
         "dynamodb_table_summary",
         "check_dynamodb_stream_lambda_readiness",

@@ -633,6 +633,19 @@ Inputs:
 - `include_permission_checks` optional, default `true`
 - `max_permission_checks` optional
 
+### `audit_sns_fanout_delivery_readiness`
+
+Audits SNS fanout delivery readiness for one topic. It summarizes subscriptions,
+protocol mix, subscription DLQs, encrypted-topic KMS hints, pending
+confirmations, and downstream Lambda/SQS policy trust. It does not publish
+messages or return raw topic policies.
+
+Inputs:
+
+- `topic_arn` required
+- `region` optional
+- `max_results` optional
+
 ## CloudWatch Alarms
 
 ### `list_cloudwatch_alarms`

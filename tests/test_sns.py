@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.sns import (
+    audit_sns_fanout_delivery_readiness,
     explain_sns_topic_dependencies,
     get_sns_topic_summary,
     list_sns_topics,
@@ -263,6 +264,26 @@ def test_explain_sns_topic_dependencies_maps_targets_dlq_and_permissions() -> No
         "explicit_denies": 0,
     }
     assert result["graph_summary"]["target_types"] == ["https", "lambda", "sqs"]
+
+
+def test_audit_sns_fanout_delivery_readiness_flags_weak_edges() -> None:
+    result = audit_sns_fanout_delivery_readiness(
+        FakeRuntime(),
+        "arn:aws:sns:eu-west-2:123456789012:dev-orders",
+    )
+
+    assert result["summary"] == {
+        "status": "weak_edges_found",
+        "subscription_count": 4,
+        "weak_edge_count": 2,
+        "risk_count": 4,
+        "protocol_mix": ["email", "https", "lambda", "sqs"],
+    }
+    assert "subscription_without_dlq" in result["signals"]["risks"]
+    assert "encrypted_topic_kms_hint" in result["signals"]["risks"]
+    assert result["topic"]["encrypted"] is True
+    assert result["subscription_audits"][0]["permission_decision"] == "allowed"
+    assert "token=secret" not in str(result)
 
 
 def test_explain_sns_topic_dependencies_can_disable_permission_checks() -> None:

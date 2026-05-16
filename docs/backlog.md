@@ -30,61 +30,54 @@ current public tool surface in `src/aws_safe_mcp/server.py` and
 `src/aws_safe_mcp/tools/*`; scopes focus on new diagnostic value beyond existing
 single-resource summaries, dependency graphs, and permission checks.
 
-1. **SNS fanout delivery readiness audit** _(Medium)_
-   - For one topic, evaluate subscriptions, protocol mix, DLQ coverage, raw
-     message delivery, endpoint summaries, topic policy shape, encrypted-topic
-     KMS hints, and downstream SQS/Lambda policy trust.
-   - Flag weak fanout edges without publishing messages or returning raw topic
-     policies.
-
-2. **KMS key lifecycle blast-radius finder** _(Medium)_
+1. **KMS key lifecycle blast-radius finder** _(Medium)_
     - For customer-managed keys, identify known dependent resources from
       summaries and hints, then flag disabled/pending-deletion keys and affected
       service paths.
     - Never decrypt, generate data keys, or return raw key policies.
 
-3. **Log signal correlation timeline** _(Large)_
+2. **Log signal correlation timeline** _(Large)_
     - Build a bounded timeline across CloudWatch alarms, Lambda error groups,
       EventBridge failed invocations, SQS age/backlog, and Step Functions failed
       executions.
     - Return ordered symptoms and likely first-failure point without returning
       payloads, full log streams, or secret values.
 
-4. **Application dependency graph exporter** _(Large)_
+3. **Application dependency graph exporter** _(Large)_
     - For an application prefix, assemble a redacted graph across discovered
       API Gateway, EventBridge, Step Functions, Lambda, SQS, SNS, DynamoDB, S3,
       CloudWatch Logs, IAM roles, and KMS.
     - Return nodes, edges, confidence, and unresolved hints using the existing
       dependency graph contract without raw policies or secret values.
 
-5. **First-blocked-edge incident runner** _(Large)_
+4. **First-blocked-edge incident runner** _(Large)_
     - Given a seed resource and symptom, run relevant existing diagnostics in a
       bounded sequence and stop at the first blocked or unknown high-confidence
       edge.
     - Output checked, blocked, unknown, and next safest tool without invoking
       workloads or performing mutating actions.
 
-6. **Resource policy condition mismatch analyzer** _(Large)_
+5. **Resource policy condition mismatch analyzer** _(Large)_
     - Normalize source ARN/account/region condition checks across Lambda, SQS,
       SNS, S3 notifications, EventBridge targets, and KMS service principals.
     - Flag wildcard overreach, missing source constraints, and mismatched source
       conditions without returning full resource policies.
 
-7. **Multi-region drift and failover readiness audit** _(Large)_
+6. **Multi-region drift and failover readiness audit** _(Large)_
     - Compare discovered resources and dependency hints across configured
       regions for missing peers, region-encoded env var drift, endpoint override
       drift, and KMS/multi-region key mismatch.
     - Remain read-only with no failover actions, resource creation, or payload
       reads.
 
-8. **Queue/DLQ replay readiness analyzer** _(Large)_
+7. **Queue/DLQ replay readiness analyzer** _(Large)_
     - For SQS DLQs and Lambda/EventBridge failure destinations, inspect redrive
       policy, source queue mapping, consumer presence, retention, KMS hints, and
       approximate age/depth.
     - Explain whether replay is likely safe and what edge must be checked first
       without reading or replaying messages.
 
-9. **Application health narrative generator** _(XLarge)_
+8. **Application health narrative generator** _(XLarge)_
     - Combine dependency graph, risk scores, alarm gaps, retry topology,
       callability proofs, network reachability, and recent failure signals into
       a concise incident-ready narrative.
