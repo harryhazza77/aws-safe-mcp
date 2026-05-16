@@ -30,22 +30,9 @@ current public tool surface in `src/aws_safe_mcp/server.py` and
 `src/aws_safe_mcp/tools/*`; scopes focus on new diagnostic value beyond existing
 single-resource summaries, dependency graphs, and permission checks.
 
-1. **End-to-end transaction trace plan** _(XLarge)_
-    - Given a seed resource name, stitch likely path across API Gateway,
-      EventBridge, Step Functions, Lambda, SQS, SNS, DynamoDB streams, and logs.
-      Return ordered checks, probable breakpoints, and safe commands/tools to
-      run next.
-    - Extend current event-driven flow stitching and incident brief beyond
-      EventBridge-centered paths.
-
-2. **Risk-scored dependency health summary** _(XLarge)_
-    - For an application prefix, assemble discovered resources into a redacted
-      graph and score each edge for callability, network reachability, policy
-      completeness, retry safety, observability, and drift from expected naming
-      or region conventions.
-    - Compose current name/tag search, incident brief, dependency graphs, alarm
-      summaries, and permission checks into an application-level health view.
+All planned feature candidates have been implemented. Add new candidates above
+as fresh follow-up ideas emerge.
 
 ## Suggested Order
 
-Use the feature candidate order above.
+No pending feature candidates.

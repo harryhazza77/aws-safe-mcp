@@ -813,3 +813,26 @@ Inputs:
 - `query` required
 - `region` optional
 - `max_matches` optional
+
+### `plan_end_to_end_transaction_trace`
+
+Builds an ordered investigation plan from a seed resource name. It reuses the
+cross-service incident brief, orders likely resources across the request path,
+and returns probable breakpoints and next checks.
+
+Inputs:
+
+- `seed_resource` required
+- `region` optional
+- `max_matches` optional
+
+### `get_risk_scored_dependency_health_summary`
+
+Searches resources by application prefix and assigns a bounded risk score based
+on service-specific callability and observability follow-up needs.
+
+Inputs:
+
+- `application_prefix` required
+- `region` optional
+- `max_matches` optional

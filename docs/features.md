@@ -271,6 +271,10 @@ Related tools:
 - Build a compact incident brief from existing safe tools, including matching
   resources, matching alarms, bounded Lambda error/dependency context, and
   suggested next checks.
+- Plan an end-to-end transaction trace from a seed resource, ordered across
+  API Gateway, EventBridge, Step Functions, Lambda, SQS, DynamoDB, and S3.
+- Produce a risk-scored dependency health summary for an application prefix
+  using discovered resources and service-specific follow-up risks.
 
 Related tools:
 
@@ -278,6 +282,8 @@ Related tools:
 - `search_aws_resources`
 - `search_aws_resources_by_tag`
 - `get_cross_service_incident_brief`
+- `plan_end_to_end_transaction_trace`
+- `get_risk_scored_dependency_health_summary`
 
 ## Local Emulator Workflows
 

@@ -12,6 +12,8 @@ from aws_safe_mcp.tools import resource_search
 from aws_safe_mcp.tools.resource_search import (
     diagnose_region_partition_mismatches,
     get_cross_service_incident_brief,
+    get_risk_scored_dependency_health_summary,
+    plan_end_to_end_transaction_trace,
     search_aws_resources,
     search_aws_resources_by_tag,
 )
@@ -241,6 +243,57 @@ def test_get_cross_service_incident_brief_composes_existing_tools(
     assert result["lambda_context"][0]["recent_error_count"] == 1
     assert result["lambda_context"][0]["dependency_summary"] == {"edge_count": 1}
     assert any("CloudWatch alarms" in check for check in result["suggested_next_checks"])
+
+
+def test_plan_end_to_end_transaction_trace_orders_probable_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_brief(*_: Any, **__: Any) -> dict[str, Any]:
+        return {
+            "matching_resources": {
+                "results": [
+                    {"service": "lambda", "name": "dev-handler"},
+                    {"service": "apigateway", "name": "dev-api"},
+                    {"service": "sqs", "name": "dev-queue"},
+                ]
+            },
+            "alarm_matches": {"count": 1},
+        }
+
+    monkeypatch.setattr(resource_search, "get_cross_service_incident_brief", fake_brief)
+
+    result = plan_end_to_end_transaction_trace(FakeRuntime(), "dev")
+
+    assert [step["service"] for step in result["trace_plan"]] == [
+        "apigateway",
+        "lambda",
+        "sqs",
+    ]
+    assert result["probable_breakpoints"][0] == {
+        "stage": "cloudwatch",
+        "reason": "matching alarms exist",
+    }
+
+
+def test_get_risk_scored_dependency_health_summary_scores_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_search(*_: Any, **__: Any) -> dict[str, Any]:
+        return {
+            "results": [
+                {"service": "lambda", "name": "dev-handler"},
+                {"service": "s3", "name": "dev-bucket"},
+            ],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(resource_search, "search_aws_resources", fake_search)
+
+    result = get_risk_scored_dependency_health_summary(FakeRuntime(), "dev")
+
+    assert result["resource_count"] == 2
+    assert result["resources"][0]["score"] == 50
+    assert result["average_risk_score"] == 25
 
 
 def test_get_cross_service_incident_brief_rejects_empty_query() -> None:

@@ -156,6 +156,62 @@ def get_cross_service_incident_brief(
     }
 
 
+def plan_end_to_end_transaction_trace(
+    runtime: AwsRuntime,
+    seed_resource: str,
+    region: str | None = None,
+    max_matches: int | None = None,
+) -> dict[str, Any]:
+    seed = seed_resource.strip()
+    if not seed:
+        raise ToolInputError("seed_resource is required")
+    brief = get_cross_service_incident_brief(
+        runtime,
+        seed,
+        region=region,
+        max_matches=max_matches,
+    )
+    resources = brief.get("matching_resources", {}).get("results", [])
+    ordered = _transaction_trace_steps(resources)
+    return {
+        "seed_resource": seed,
+        "region": region or runtime.region,
+        "probable_resources": resources,
+        "trace_plan": ordered,
+        "probable_breakpoints": _transaction_breakpoints(ordered, brief),
+        "source_brief": brief,
+    }
+
+
+def get_risk_scored_dependency_health_summary(
+    runtime: AwsRuntime,
+    application_prefix: str,
+    region: str | None = None,
+    max_matches: int | None = None,
+) -> dict[str, Any]:
+    prefix = application_prefix.strip()
+    if not prefix:
+        raise ToolInputError("application_prefix is required")
+    resources = search_aws_resources(runtime, prefix, region=region, max_results=max_matches)
+    scores = [_resource_health_score(item) for item in resources.get("results", [])]
+    total = sum(item["score"] for item in scores)
+    average = round(total / len(scores), 2) if scores else 0
+    return {
+        "application_prefix": prefix,
+        "region": region or runtime.region,
+        "resource_count": len(scores),
+        "average_risk_score": average,
+        "resources": scores,
+        "summary": {
+            "status": "risks_detected"
+            if any(item["score"] > 0 for item in scores)
+            else "no_resources",
+            "highest_risk_score": max((item["score"] for item in scores), default=0),
+        },
+        "warnings": resources.get("warnings", []),
+    }
+
+
 def diagnose_region_partition_mismatches(
     runtime: AwsRuntime,
     resource_refs: list[str],
@@ -286,6 +342,67 @@ def _incident_next_checks(
             "Open the matching resource summaries and follow dependency tools for the service."
         )
     return checks
+
+
+def _transaction_trace_steps(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    order = ["apigateway", "eventbridge", "stepfunctions", "lambda", "sqs", "dynamodb", "s3"]
+    by_service: dict[str, list[dict[str, Any]]] = {service: [] for service in order}
+    for item in resources:
+        service = str(item.get("service") or "")
+        if service in by_service:
+            by_service[service].append(item)
+    steps = []
+    for service in order:
+        for item in by_service[service]:
+            steps.append(
+                {
+                    "service": service,
+                    "resource": item.get("name") or item.get("arn"),
+                    "check": _transaction_check_for_service(service),
+                }
+            )
+    return steps
+
+
+def _transaction_check_for_service(service: str) -> str:
+    return {
+        "apigateway": "investigate API Gateway route integration and Lambda permission",
+        "eventbridge": "investigate rule delivery and target policy",
+        "stepfunctions": "explain task dependencies and execution failures",
+        "lambda": "inspect Lambda errors, dependencies, network, and invocation proof",
+        "sqs": "check queue delivery, visibility timeout, DLQ, and Lambda mapping",
+        "dynamodb": "inspect table state, streams, and encryption",
+        "s3": "inspect bucket policy, notifications, and encryption",
+    }.get(service, "inspect resource summary")
+
+
+def _transaction_breakpoints(
+    steps: list[dict[str, Any]],
+    brief: dict[str, Any],
+) -> list[dict[str, str]]:
+    breakpoints = [
+        {"stage": str(step["service"]), "reason": str(step["check"])} for step in steps[:5]
+    ]
+    if brief.get("alarm_matches", {}).get("count", 0):
+        breakpoints.insert(0, {"stage": "cloudwatch", "reason": "matching alarms exist"})
+    return breakpoints
+
+
+def _resource_health_score(item: dict[str, Any]) -> dict[str, Any]:
+    service = str(item.get("service") or "unknown")
+    risks = []
+    if service in {"lambda", "sqs", "eventbridge", "apigateway"}:
+        risks.append("callability_not_proven")
+    if service in {"lambda", "apigateway"}:
+        risks.append("observability_should_be_checked")
+    score = min(100, len(risks) * 25)
+    return {
+        "service": service,
+        "name": item.get("name"),
+        "arn": item.get("arn"),
+        "score": score,
+        "risks": risks,
+    }
 
 
 def _selected_services(services: list[str] | None) -> list[str]:

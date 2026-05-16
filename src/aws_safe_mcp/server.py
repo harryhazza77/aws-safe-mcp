@@ -109,6 +109,12 @@ from aws_safe_mcp.tools.resource_search import (
     get_cross_service_incident_brief as get_cross_service_incident_brief_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
+    get_risk_scored_dependency_health_summary as get_risk_scored_dependency_health_summary_tool,
+)
+from aws_safe_mcp.tools.resource_search import (
+    plan_end_to_end_transaction_trace as plan_end_to_end_transaction_trace_tool,
+)
+from aws_safe_mcp.tools.resource_search import (
     search_aws_resources as search_aws_resources_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
@@ -1099,6 +1105,36 @@ def _register_search_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
         return get_cross_service_incident_brief_tool(
             runtime,
             query=query,
+            region=region,
+            max_matches=max_matches,
+        )
+
+    @mcp.tool()
+    @audit.tool("plan_end_to_end_transaction_trace")
+    def plan_end_to_end_transaction_trace(
+        seed_resource: str,
+        region: str | None = None,
+        max_matches: int | None = None,
+    ) -> dict[str, object]:
+        """Return an ordered transaction trace plan from a seed resource name."""
+        return plan_end_to_end_transaction_trace_tool(
+            runtime,
+            seed_resource=seed_resource,
+            region=region,
+            max_matches=max_matches,
+        )
+
+    @mcp.tool()
+    @audit.tool("get_risk_scored_dependency_health_summary")
+    def get_risk_scored_dependency_health_summary(
+        application_prefix: str,
+        region: str | None = None,
+        max_matches: int | None = None,
+    ) -> dict[str, object]:
+        """Score discovered application resources for dependency health risks."""
+        return get_risk_scored_dependency_health_summary_tool(
+            runtime,
+            application_prefix=application_prefix,
             region=region,
             max_matches=max_matches,
         )
