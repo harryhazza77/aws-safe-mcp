@@ -710,6 +710,8 @@ def test_explain_lambda_network_access_reports_nat_internet_path() -> None:
 
     assert result["summary"]["network_mode"] == "vpc"
     assert result["summary"]["internet_access"] == "yes"
+    assert result["target_reachability"]["summary"]["status"] == "likely_reachable"
+    assert result["target_reachability"]["environment_url_target_count"] == 2
     assert result["egress"]["internet"]["via"] == ["nat-1"]
     assert {path["from_subnet"] for path in result["paths"] if path["verdict"] == "reachable"} == {
         "subnet-1",
@@ -766,6 +768,42 @@ def test_explain_lambda_network_access_reports_security_group_block() -> None:
     assert internet_paths[0]["limited_by"] == [
         "no security group egress rule allows tcp/443 to 0.0.0.0/0"
     ]
+
+
+def test_explain_lambda_network_access_classifies_explicit_url_block() -> None:
+    runtime = FakeRuntime()
+    runtime.ec2_client = FakeEc2Client(
+        route_tables=[
+            {
+                "RouteTableId": "rtb-isolated",
+                "Associations": [{"SubnetId": "subnet-1"}, {"SubnetId": "subnet-2"}],
+                "Routes": [{"DestinationCidrBlock": "10.0.0.0/16", "GatewayId": "local"}],
+            }
+        ]
+    )
+
+    result = explain_lambda_network_access(
+        runtime,
+        "dev-api",
+        target_url="https://api.example.com/orders",
+    )
+
+    explicit_target = result["target_reachability"]["explicit_target"]
+    assert explicit_target["target_class"] == "public_internet"
+    assert result["target_reachability"]["summary"] == {
+        "status": "blocked",
+        "blocked_target_count": 2,
+        "unknown_target_count": 0,
+    }
+    assert result["target_reachability"]["evaluated_targets"][0]["reachability"] == {
+        "verdict": "blocked",
+        "reason": "network_summary_blocks_path",
+    }
+
+
+def test_explain_lambda_network_access_validates_target_url() -> None:
+    with pytest.raises(ToolInputError, match="target_url must be"):
+        explain_lambda_network_access(FakeRuntime(), "dev-api", target_url="ftp://example.com")
 
 
 def test_explain_lambda_network_access_reports_mixed_subnet_routes() -> None:

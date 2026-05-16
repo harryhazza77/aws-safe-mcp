@@ -199,7 +199,10 @@ Traces inferred internet and private network reachability for one Lambda from
 static AWS configuration. For VPC Lambdas, it inspects Lambda VPC config,
 subnets, security groups, route tables, network ACLs, and VPC endpoints. For
 non-VPC Lambdas, it reports AWS-managed runtime networking. The result uses the
-contract in [Lambda network access contract](lambda-network-access.md).
+contract in [Lambda network access contract](lambda-network-access.md). When
+`target_url` is supplied, the tool classifies that URL as public internet,
+private DNS/network, or AWS service endpoint and maps it to the inferred egress
+posture. It also reports redacted URL-like environment targets by key only.
 
 This tool reports network-layer possibility, not proof that function code
 actually calls a destination.
@@ -208,6 +211,7 @@ Inputs:
 
 - `function_name` required
 - `region` optional
+- `target_url` optional
 
 ### `check_lambda_permission_path`
 

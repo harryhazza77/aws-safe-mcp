@@ -81,7 +81,9 @@ Related tools:
 - Diagnose Lambda event source mappings with source state, batch/window
   settings, failure destination, filter presence, and inferred role permission
   checks without reading queue messages or stream records.
-- Trace inferred Lambda network reachability from static VPC configuration.
+- Trace inferred Lambda network reachability from static VPC configuration,
+  including target-aware URL classification for explicit URLs and redacted
+  URL-like environment values.
 - Check whether a Lambda execution role appears allowed to perform a specific
   IAM action on a specific resource ARN.
 - Check whether one Lambda appears able to send messages to one SQS queue,

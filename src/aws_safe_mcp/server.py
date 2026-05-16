@@ -359,12 +359,14 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
     def explain_lambda_network_access(
         function_name: str,
         region: str | None = None,
+        target_url: str | None = None,
     ) -> dict[str, object]:
         """Trace inferred internet and private network reachability for one Lambda."""
         return explain_lambda_network_access_tool(
             runtime,
             function_name=function_name,
             region=region,
+            target_url=target_url,
         )
 
     @mcp.tool()

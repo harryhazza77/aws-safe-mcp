@@ -429,9 +429,11 @@ def explain_lambda_network_access(
     runtime: AwsRuntime,
     function_name: str,
     region: str | None = None,
+    target_url: str | None = None,
 ) -> dict[str, Any]:
     resolved_region = resolve_region(runtime, region)
     required_name = require_lambda_name(function_name)
+    required_target_url = _require_optional_url(target_url)
     lambda_client = runtime.client("lambda", region=resolved_region)
 
     try:
@@ -445,9 +447,16 @@ def explain_lambda_network_access(
         list(vpc_config.get("SecurityGroupIds", [])) if isinstance(vpc_config, dict) else []
     )
     vpc_id = str(vpc_config.get("VpcId") or "") if isinstance(vpc_config, dict) else ""
+    env_url_targets = _lambda_environment_url_targets(config)
 
     if not vpc_id:
-        return _lambda_non_vpc_network_access(required_name, resolved_region, config)
+        result = _lambda_non_vpc_network_access(required_name, resolved_region, config)
+        result["target_reachability"] = _lambda_url_target_reachability(
+            target_url=required_target_url,
+            env_url_targets=env_url_targets,
+            network_result=result,
+        )
+        return result
 
     ec2_client = runtime.client("ec2", region=resolved_region)
     try:
@@ -467,7 +476,7 @@ def explain_lambda_network_access(
     except (BotoCoreError, ClientError) as exc:
         raise normalize_aws_error(exc, "ec2.DescribeLambdaNetworkAccess") from exc
 
-    return _lambda_vpc_network_access(
+    result = _lambda_vpc_network_access(
         function_name=required_name,
         region=resolved_region,
         config=config,
@@ -480,6 +489,12 @@ def explain_lambda_network_access(
         network_acls=network_acls,
         endpoints=endpoints,
     )
+    result["target_reachability"] = _lambda_url_target_reachability(
+        target_url=required_target_url,
+        env_url_targets=env_url_targets,
+        network_result=result,
+    )
+    return result
 
 
 def check_lambda_permission_path(
@@ -812,6 +827,131 @@ def _environment_host_kind(host: str) -> str:
     if host.endswith((".local", ".internal")):
         return "private_dns"
     return "external_url"
+
+
+def _require_optional_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        raise ToolInputError("target_url cannot be blank")
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ToolInputError("target_url must be an http or https URL")
+    return normalized
+
+
+def _lambda_environment_url_targets(config: dict[str, Any]) -> list[dict[str, Any]]:
+    variables = ((config.get("Environment") or {}).get("Variables") or {})
+    if not isinstance(variables, dict):
+        return []
+    targets: list[dict[str, Any]] = []
+    for key, value in sorted(variables.items()):
+        if not isinstance(value, str):
+            continue
+        hint = _environment_url_hint(value)
+        if not hint:
+            continue
+        targets.append(
+            {
+                "key": str(key),
+                "value_shape": hint["value_shape"],
+                "service": hint["service"],
+                "region": hint["region"],
+                "partition": hint["partition"],
+                "host_kind": hint["host_kind"],
+                "target_class": _lambda_url_target_class(str(hint["host_kind"])),
+            }
+        )
+    return targets
+
+
+def _lambda_url_target_reachability(
+    *,
+    target_url: str | None,
+    env_url_targets: list[dict[str, Any]],
+    network_result: dict[str, Any],
+) -> dict[str, Any]:
+    explicit_target = _lambda_explicit_url_target(target_url) if target_url else None
+    candidates = [*env_url_targets]
+    if explicit_target:
+        candidates.insert(0, explicit_target)
+    evaluated = [
+        {
+            **candidate,
+            "reachability": _lambda_target_reachability_for_class(
+                str(candidate.get("target_class") or "unknown"),
+                network_result,
+            ),
+        }
+        for candidate in candidates
+    ]
+    blocked = [item for item in evaluated if item["reachability"]["verdict"] == "blocked"]
+    unknown = [item for item in evaluated if item["reachability"]["verdict"] == "unknown"]
+    return {
+        "explicit_target": explicit_target,
+        "environment_url_target_count": len(env_url_targets),
+        "environment_url_targets": env_url_targets,
+        "evaluated_targets": evaluated,
+        "summary": {
+            "status": "blocked" if blocked else "unknown" if unknown else "likely_reachable",
+            "blocked_target_count": len(blocked),
+            "unknown_target_count": len(unknown),
+        },
+    }
+
+
+def _lambda_explicit_url_target(target_url: str) -> dict[str, Any]:
+    parsed = urlparse(target_url)
+    host = parsed.hostname or ""
+    parts = host.split(".")
+    host_kind = _environment_host_kind(host)
+    return {
+        "key": None,
+        "value_shape": "url",
+        "service": parts[0] if host.endswith(".amazonaws.com") else "http",
+        "region": _environment_region_from_host(parts),
+        "partition": _environment_partition_from_host(host),
+        "host_kind": host_kind,
+        "target_class": _lambda_url_target_class(host_kind),
+        "scheme": parsed.scheme,
+        "port": parsed.port or (443 if parsed.scheme == "https" else 80),
+    }
+
+
+def _lambda_url_target_class(host_kind: str) -> str:
+    if host_kind == "aws_service_endpoint":
+        return "aws_service_endpoint"
+    if host_kind == "private_dns":
+        return "private_network"
+    return "public_internet"
+
+
+def _lambda_target_reachability_for_class(
+    target_class: str,
+    network_result: dict[str, Any],
+) -> dict[str, Any]:
+    summary = network_result.get("summary", {})
+    if target_class == "public_internet":
+        return _reachability_from_summary(str(summary.get("internet_access") or "unknown"))
+    if target_class == "aws_service_endpoint":
+        aws_private = str(summary.get("aws_private_service_access") or "unknown")
+        internet = str(summary.get("internet_access") or "unknown")
+        if aws_private == "yes":
+            return {"verdict": "reachable", "reason": "matching_vpc_endpoint_present"}
+        verdict = _reachability_from_summary(internet)
+        return {**verdict, "reason": f"aws_service_endpoint_via_internet_{verdict['verdict']}"}
+    if target_class == "private_network":
+        return _reachability_from_summary(str(summary.get("private_network_access") or "unknown"))
+    return {"verdict": "unknown", "reason": "target_class_unknown"}
+
+
+def _reachability_from_summary(value: str) -> dict[str, str]:
+    if value == "yes":
+        return {"verdict": "reachable", "reason": "network_summary_allows_path"}
+    if value == "no":
+        return {"verdict": "blocked", "reason": "network_summary_blocks_path"}
+    return {"verdict": "unknown", "reason": "network_summary_unknown"}
 
 
 def _environment_dependency_reason(
