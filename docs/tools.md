@@ -103,6 +103,19 @@ Inputs:
 - `service_principal` optional
 - `region` optional
 
+### `find_kms_key_lifecycle_blast_radius`
+
+Finds lifecycle blast-radius risk for one KMS key. It reports disabled,
+pending-deletion, or pending-import key state and maps supplied dependent
+resource ARN hints to affected services. It never decrypts, generates data
+keys, or returns key policy documents.
+
+Inputs:
+
+- `key_id` required
+- `dependent_resource_arns` optional
+- `region` optional
+
 ## Lambda
 
 ### `list_lambda_functions`

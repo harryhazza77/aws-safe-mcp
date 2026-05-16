@@ -8,7 +8,12 @@ from botocore.exceptions import ClientError
 
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
-from aws_safe_mcp.tools.kms import check_kms_dependent_path, get_kms_key_summary, list_kms_keys
+from aws_safe_mcp.tools.kms import (
+    check_kms_dependent_path,
+    find_kms_key_lifecycle_blast_radius,
+    get_kms_key_summary,
+    list_kms_keys,
+)
 
 
 class FakeKmsClient:
@@ -28,39 +33,40 @@ class FakeKmsClient:
 
     def describe_key(self, KeyId: str) -> dict[str, Any]:
         self.describe_requests.append(KeyId)
+        key_state = "PendingDeletion" if KeyId == "key-pending" else "Enabled"
         return {
             "KeyMetadata": {
                 "KeyId": KeyId,
                 "Arn": f"arn:aws:kms:eu-west-2:123456789012:key/{KeyId}",
                 "Description": "app encryption key",
-                "Enabled": True,
-                "KeyState": "Enabled",
+                "Enabled": key_state == "Enabled",
+                "KeyState": key_state,
                 "KeyUsage": "ENCRYPT_DECRYPT",
                 "KeyManager": "CUSTOMER",
                 "Origin": "AWS_KMS",
                 "CreationDate": datetime(2026, 1, 1, tzinfo=UTC),
+                "DeletionDate": datetime(2026, 2, 1, tzinfo=UTC)
+                if key_state == "PendingDeletion"
+                else None,
                 "MultiRegion": False,
             }
         }
 
     def get_key_rotation_status(self, KeyId: str) -> dict[str, Any]:
-        assert KeyId == "key-1"
         return {"KeyRotationEnabled": True}
 
     def list_aliases(self, **kwargs: Any) -> dict[str, Any]:
-        assert kwargs["KeyId"] == "key-1"
         return {
             "Aliases": [
                 {
                     "AliasName": "alias/dev-key",
                     "AliasArn": "arn:aws:kms:eu-west-2:123456789012:alias/dev-key",
-                    "TargetKeyId": "key-1",
+                    "TargetKeyId": kwargs["KeyId"],
                 }
             ]
         }
 
     def list_key_policies(self, KeyId: str, **_: Any) -> dict[str, Any]:
-        assert KeyId == "key-1"
         return {"PolicyNames": ["default"]}
 
     def get_key_policy(self, KeyId: str, PolicyName: str) -> dict[str, Any]:
@@ -134,6 +140,27 @@ def test_get_kms_key_summary_returns_alias_rotation_and_policy_names() -> None:
 def test_get_kms_key_summary_rejects_empty_key_id() -> None:
     with pytest.raises(ToolInputError, match="key_id is required"):
         get_kms_key_summary(FakeRuntime(), " ")
+
+
+def test_find_kms_key_lifecycle_blast_radius_flags_affected_dependents() -> None:
+    result = find_kms_key_lifecycle_blast_radius(
+        FakeRuntime(),
+        "key-pending",
+        dependent_resource_arns=[
+            "arn:aws:sqs:eu-west-2:123456789012:dev-queue",
+            "arn:aws:lambda:eu-west-2:123456789012:function:dev-api",
+        ],
+    )
+
+    assert result["summary"] == {
+        "status": "blast_radius_risk",
+        "dependent_count": 2,
+        "affected_dependent_count": 2,
+        "risks": ["key_disabled", "key_pending_deletion", "dependent_paths_affected"],
+    }
+    assert result["signals"]["affected_services"] == ["lambda", "sqs"]
+    assert result["key"]["key_state"] == "PendingDeletion"
+    assert "Policy" not in str(result)
 
 
 def test_list_kms_keys_normalizes_list_errors() -> None:

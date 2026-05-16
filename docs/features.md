@@ -42,12 +42,16 @@ Related tools:
   without decrypting, generating data keys, or returning key policy JSON.
 - Check whether an IAM role and optional AWS service principal have the KMS
   actions needed for encrypted service paths without returning key policy JSON.
+- Find KMS key lifecycle blast radius for disabled or pending-deletion
+  customer-managed keys from supplied dependent-resource hints without
+  decrypting or returning key policies.
 
 Related tools:
 
 - `list_kms_keys`
 - `get_kms_key_summary`
 - `check_kms_dependent_path`
+- `find_kms_key_lifecycle_blast_radius`
 
 ## ECS Inspection
 

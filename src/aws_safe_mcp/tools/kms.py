@@ -132,6 +132,40 @@ def check_kms_dependent_path(
     }
 
 
+def find_kms_key_lifecycle_blast_radius(
+    runtime: AwsRuntime,
+    key_id: str,
+    dependent_resource_arns: list[str] | None = None,
+    region: str | None = None,
+) -> dict[str, Any]:
+    summary = get_kms_key_summary(runtime, key_id=key_id, region=region)
+    metadata = summary["metadata"]
+    dependents = [
+        _kms_dependent_resource_hint(resource_arn)
+        for resource_arn in (dependent_resource_arns or [])
+        if resource_arn.strip()
+    ]
+    signals = _kms_lifecycle_blast_radius_signals(metadata, dependents)
+    return {
+        "region": summary["region"],
+        "key_id": summary["key_id"],
+        "key": {
+            "arn": metadata.get("arn"),
+            "enabled": metadata.get("enabled"),
+            "key_state": metadata.get("key_state"),
+            "deletion_date": metadata.get("deletion_date"),
+            "key_manager": metadata.get("key_manager"),
+            "multi_region": metadata.get("multi_region"),
+        },
+        "aliases": summary["aliases"],
+        "dependent_resources": dependents,
+        "summary": _kms_lifecycle_blast_radius_summary(signals),
+        "signals": signals,
+        "suggested_next_checks": _kms_lifecycle_blast_radius_next_checks(signals),
+        "warnings": summary["warnings"],
+    }
+
+
 def _require_key_id(value: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -225,6 +259,60 @@ def _kms_inventory_summary(keys: list[dict[str, Any]]) -> dict[str, Any]:
         "by_state": by_state,
         "by_usage": by_usage,
     }
+
+
+def _kms_dependent_resource_hint(resource_arn: str) -> dict[str, Any]:
+    parts = resource_arn.split(":")
+    service = parts[2] if len(parts) > 2 else "unknown"
+    return {
+        "resource_arn": resource_arn,
+        "service": service,
+        "resource_name": resource_arn.rsplit(":", 1)[-1].rsplit("/", 1)[-1],
+    }
+
+
+def _kms_lifecycle_blast_radius_signals(
+    metadata: dict[str, Any],
+    dependents: list[dict[str, Any]],
+) -> dict[str, Any]:
+    key_state = str(metadata.get("key_state") or "unknown")
+    risks = []
+    if metadata.get("enabled") is False or key_state == "Disabled":
+        risks.append("key_disabled")
+    if key_state == "PendingDeletion":
+        risks.append("key_pending_deletion")
+    if key_state == "PendingImport":
+        risks.append("key_pending_import")
+    if dependents and risks:
+        risks.append("dependent_paths_affected")
+    return {
+        "key_state": key_state,
+        "dependent_count": len(dependents),
+        "affected_dependent_count": len(dependents) if risks else 0,
+        "affected_services": sorted({str(item["service"]) for item in dependents}) if risks else [],
+        "risk_count": len(risks),
+        "risks": risks,
+    }
+
+
+def _kms_lifecycle_blast_radius_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "blast_radius_risk" if signals["risk_count"] else "no_lifecycle_risk",
+        "dependent_count": signals["dependent_count"],
+        "affected_dependent_count": signals["affected_dependent_count"],
+        "risks": signals["risks"],
+    }
+
+
+def _kms_lifecycle_blast_radius_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if "key_pending_deletion" in signals["risks"]:
+        checks.append("Confirm pending key deletion is intentional for listed dependent paths.")
+    if "key_disabled" in signals["risks"]:
+        checks.append("Confirm disabled key state before investigating dependent service failures.")
+    if not checks:
+        checks.append("No KMS key lifecycle blast-radius risk found in supplied metadata.")
+    return checks
 
 
 def _kms_role_permission_checks(

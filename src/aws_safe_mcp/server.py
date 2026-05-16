@@ -70,6 +70,9 @@ from aws_safe_mcp.tools.iam import get_iam_role_summary as get_iam_role_summary_
 from aws_safe_mcp.tools.identity import aws_auth_status as get_aws_auth_status
 from aws_safe_mcp.tools.identity import aws_identity as get_aws_identity
 from aws_safe_mcp.tools.kms import check_kms_dependent_path as check_kms_dependent_path_tool
+from aws_safe_mcp.tools.kms import (
+    find_kms_key_lifecycle_blast_radius as find_kms_key_lifecycle_blast_radius_tool,
+)
 from aws_safe_mcp.tools.kms import get_kms_key_summary as get_kms_key_summary_tool
 from aws_safe_mcp.tools.kms import list_kms_keys as list_kms_keys_tool
 from aws_safe_mcp.tools.lambda_tools import (
@@ -297,6 +300,21 @@ def _register_kms_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
             key_id=key_id,
             role_arn=role_arn,
             service_principal=service_principal,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("find_kms_key_lifecycle_blast_radius")
+    def find_kms_key_lifecycle_blast_radius(
+        key_id: str,
+        dependent_resource_arns: list[str] | None = None,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Find dependent-resource risk for disabled or pending-deletion KMS keys."""
+        return find_kms_key_lifecycle_blast_radius_tool(
+            runtime,
+            key_id=key_id,
+            dependent_resource_arns=dependent_resource_arns,
             region=region,
         )
 
