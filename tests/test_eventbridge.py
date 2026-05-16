@@ -594,6 +594,18 @@ def test_investigate_eventbridge_rule_delivery_combines_metrics_and_dlq_state() 
     assert lambda_target["dead_letter_queue"]["approximate_number_of_messages"] == 3
     assert lambda_target["permission_decision"] == "allowed"
     assert "failed delivery" in result["diagnostic_summary"]
+    assert result["readiness_summary"] == {
+        "status": "needs_attention",
+        "blockers": [],
+        "cautions": [
+            "target_permission_unknown",
+            "failed_invocations",
+            "dlq_activity",
+            "targets_without_dlq",
+        ],
+        "target_count": 3,
+        "targets_without_dlq": ["sfn", "unsupported"],
+    }
     assert any("DLQ" in check for check in result["suggested_next_checks"])
 
 

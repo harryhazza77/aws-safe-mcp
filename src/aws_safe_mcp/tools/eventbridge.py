@@ -248,6 +248,7 @@ def investigate_eventbridge_rule_delivery(
         "region": resolved_region,
         "window_minutes": window_minutes,
         "diagnostic_summary": _delivery_diagnostic_summary(dependencies, signals),
+        "readiness_summary": _delivery_readiness_summary(signals, target_diagnostics),
         "configuration": {
             "summary": dependencies["summary"],
             "targets": dependencies["nodes"]["targets"],
@@ -1664,6 +1665,38 @@ def _delivery_diagnostic_summary(dependencies: dict[str, Any], signals: dict[str
             f"EventBridge rule {rule_name} matched events and no delivery failures were detected."
         )
     return f"EventBridge rule {rule_name} has no obvious delivery failures in the selected window."
+
+
+def _delivery_readiness_summary(
+    signals: dict[str, Any],
+    target_diagnostics: list[dict[str, Any]],
+) -> dict[str, Any]:
+    blockers = []
+    cautions = []
+    if signals["rule_disabled"]:
+        blockers.append("rule_disabled")
+    if not signals["has_targets"]:
+        blockers.append("no_targets")
+    if signals["permission_denied_count"]:
+        blockers.append("target_permission_denied")
+    if signals["permission_unknown_count"]:
+        cautions.append("target_permission_unknown")
+    if signals["has_failed_invocations"]:
+        cautions.append("failed_invocations")
+    if signals["has_dlq_activity"] or signals["dlq_visible_messages"]:
+        cautions.append("dlq_activity")
+    targets_without_dlq = [
+        target["target_id"] for target in target_diagnostics if not target.get("dead_letter_queue")
+    ]
+    if targets_without_dlq:
+        cautions.append("targets_without_dlq")
+    return {
+        "status": "blocked" if blockers else "needs_attention" if cautions else "ready",
+        "blockers": blockers,
+        "cautions": cautions,
+        "target_count": len(target_diagnostics),
+        "targets_without_dlq": targets_without_dlq,
+    }
 
 
 def _delivery_signal_groups(signals: dict[str, Any]) -> dict[str, list[str]]:
