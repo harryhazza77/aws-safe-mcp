@@ -31,16 +31,18 @@ committed as a focused change.
 When the user invokes `/goal`, do this:
 
 1. Read `docs/features.md`, `docs/backlog.md`, and `docs/goal.md`.
-2. Select the first unfinished backlog item unless the user explicitly picks
-   another item.
-3. Cross-check existing code and docs to avoid duplicating that feature.
+2. Work through every unfinished backlog item in order unless the user
+   explicitly picks a different item or asks to stop after a subset.
+3. For each item, cross-check existing code and docs to avoid duplicating that
+   feature.
 4. Implement the smallest version that satisfies the backlog acceptance notes.
 5. Add or update focused unit tests.
 6. Update `docs/tools.md` and move the completed capability from
    `docs/backlog.md` into `docs/features.md`.
 7. If Terraform fixture changes are needed, update
    `/Users/hareshpatel/Documents/code/aws-sdk-mcp-tf` and commit that repo
-   separately.
+   separately. MiniStack may not always support the scenario; when adding the
+   feature to `docs/features.md`, mark unsupported emulator proof as untested.
 8. Run local verification:
    - Always run focused tests plus `uv run ruff check src tests`,
      `uv run mypy`, and `uv run pytest`.
@@ -49,8 +51,9 @@ When the user invokes `/goal`, do this:
    - If emulator proof would require new permission prompts, stop after unit
      tests and clearly report the exact skipped proof command shapes.
 9. Commit the main repo as one focused feature commit.
-10. If the user asked to continue the goal, repeat from step 1 for the next
-    backlog item.
+10. Repeat from step 1 for the next backlog item until the backlog is empty, an
+    item is genuinely blocked, verification fails and cannot be fixed in the
+    current turn, or the user interrupts.
 
 Do not bundle multiple backlog items into one main-repo commit. After each
 feature, leave both repositories clean or clearly report why that was not
@@ -103,7 +106,9 @@ proposal, or says not to write code yet. In planning mode, describe user value,
 existing overlap, acceptance criteria, tests, fixture changes, emulator choice,
 verification command shapes, likely files, and risks.
 
-## Candidate First Batch
+## Completion Rule
 
-1. Step Functions execution diagnostics upgrade.
-2. API Gateway route diagnostics.
+`/goal` means continue the full workstream, not only the first backlog item. If
+the run stops before all backlog items are complete, report the exact stopping
+point, current repository state, completed commits, skipped verification, and
+next backlog item.

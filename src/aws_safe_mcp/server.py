@@ -81,6 +81,9 @@ from aws_safe_mcp.tools.lambda_tools import (
     list_lambda_functions as list_lambda_functions_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
+    diagnose_region_partition_mismatches as diagnose_region_partition_mismatches_tool,
+)
+from aws_safe_mcp.tools.resource_search import (
     get_cross_service_incident_brief as get_cross_service_incident_brief_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
@@ -866,6 +869,23 @@ def _register_eventbridge_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRu
 
 
 def _register_search_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -> None:
+    @mcp.tool()
+    @audit.tool("diagnose_region_partition_mismatches")
+    def diagnose_region_partition_mismatches(
+        resource_refs: list[str],
+        expected_region: str | None = None,
+        expected_partition: str | None = None,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Check resource references and endpoint overrides for region/partition drift."""
+        return diagnose_region_partition_mismatches_tool(
+            runtime,
+            resource_refs=resource_refs,
+            expected_region=expected_region,
+            expected_partition=expected_partition,
+            region=region,
+        )
+
     @mcp.tool()
     @audit.tool("search_aws_resources")
     def search_aws_resources(

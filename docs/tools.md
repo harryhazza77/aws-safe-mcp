@@ -625,6 +625,23 @@ Inputs:
 
 ## Cross-Service Search
 
+### `diagnose_region_partition_mismatches`
+
+Checks explicit resource references and configured endpoint overrides for
+region or partition drift. The tool parses ARNs and AWS-style URLs, including
+SQS queue URLs and service endpoint hosts, then reports mismatches against the
+expected region and partition without calling resource APIs.
+
+Plain names such as table names or bucket names are reported as unknown because
+they do not encode region or partition by themselves.
+
+Inputs:
+
+- `resource_refs` required, list of ARNs, URLs, endpoint hosts, or names
+- `expected_region` optional, defaults to `region` or configured runtime region
+- `expected_partition` optional, default `aws`
+- `region` optional
+
 ### `search_aws_resources`
 
 Best-effort name search across safe discovery tools for Lambda, Step Functions,

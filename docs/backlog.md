@@ -23,34 +23,152 @@ Avoid features that:
 
 ## Feature Candidates
 
-No open feature candidates remain from the current goal batch.
+### Deep Diagnostic Workflows
 
-## Existing Feature Cross-Check
+Ordered by estimated feature size, smallest first. Each item accounts for the
+current public tool surface in `src/aws_safe_mcp/server.py` and
+`src/aws_safe_mcp/tools/*`; scopes focus on new diagnostic value beyond existing
+single-resource summaries, dependency graphs, and permission checks.
 
-This backlog was cross-checked against the current public MCP tool registrations
-and tool modules. Existing public tools already cover:
+1. **Lambda environment dependency resolver** _(Small)_
+   - Parse environment variable names and redacted values for ARNs, URLs,
+     queue URLs, table names, bucket names, secret references, and endpoint
+     hosts, then build a dependency graph with confidence levels.
+   - Extend the current Lambda dependency graph, which exposes environment
+     variable keys but does not classify redacted values.
 
-- Identity: `aws_auth_status`, `aws_identity`.
-- Runtime configuration: global `endpoint_url` and service-specific endpoint
-  overrides.
-- Lambda: listing, summary, recent errors, failure investigation, dependency
-  graph, network access, and role permission path checks.
-- Step Functions: listing, execution summary, failure investigation, dependency
-  graph, ASL parsing, role summary, and permission hints/checks.
-- S3: bucket listing, object metadata listing, and bucket summary.
-- DynamoDB: table listing and table summary.
-- SQS: queue listing and queue summary without receiving messages.
-- CloudWatch Logs: log group listing and bounded filter search.
-- API Gateway: API listing, summary, route/integration dependency graph, and
-  Lambda resource-policy checks.
-- EventBridge: rule listing, rule dependency graph, delivery investigation, and
-  event-driven flow stitching through EventBridge, Step Functions, and Lambda.
-- Cross-service search: safe name search across currently supported services.
+2. **CloudWatch Logs writeability check** _(Small)_
+   - For a Lambda or Step Functions execution role, verify log group naming,
+     retention, KMS encryption, resource policies where relevant, and role
+     permissions for creating streams and putting events.
+   - Extend existing log group search and bounded Logs Insights tools with a
+     write-path readiness check.
 
-The backlog items above are therefore biased toward public tools for services
-that only have private helper coverage today, or workflow upgrades that compose
-existing tools into higher-value diagnostics.
+3. **Lambda-to-SQS sendability check** _(Medium)_
+   - For a queue discovered from env vars or event config, check Lambda role
+     permissions, queue policy, KMS key policy hints, FIFO name compatibility,
+     and region/account mismatches.
+   - Compose existing Lambda permission checks and SQS dependency checks into a
+     first-blocked-edge producer proof.
+
+4. **SQS-to-Lambda delivery check** _(Medium)_
+   - Inspect event source mapping, queue visibility timeout vs Lambda timeout,
+     batch size/window, DLQ/redrive policy, partial batch response config,
+     Lambda permissions, and recent iterator/error signals.
+   - Deepen existing Lambda event source mapping diagnostics and SQS dependency
+     graphs with delivery readiness scoring.
+
+5. **Async Lambda failure path audit** _(Medium)_
+   - Inspect async invoke config, maximum retry attempts, max event age,
+     destinations, DLQ, reserved concurrency, throttles, and recent async
+     delivery failures to explain where events go when invocation fails.
+   - Complement existing Lambda failure investigation, alias/version summary,
+     metrics, logs, and dependency graph output.
+
+6. **API Gateway-to-Lambda callability check** _(Medium)_
+   - Check route/integration wiring, stage deployment, authorizer presence,
+     Lambda resource policy source ARN, payload format version, timeout
+     mismatch, VPC link/private integration hints, and recent 4XX/5XX signals.
+   - Build on existing API Gateway summary, authorizer summary, dependency
+     graph, route investigation, Lambda policy checks, and Lambda error context.
+
+7. **EventBridge-to-target delivery proof** _(Medium)_
+   - Starting from a rule or event bus, verify event pattern match likelihood,
+     target configuration, role permissions, Lambda resource policy or SQS/SNS
+     resource policy, DLQ setup, retry policy, and recent failed invocation
+     metrics/logs.
+   - Deepen existing EventBridge rule dependency and delivery investigation
+     tools with explicit readiness scoring and breakpoint output.
+
+8. **Step Functions task permission proof** _(Medium)_
+   - Parse redacted ASL task states into service actions and resource hints,
+     then check execution role permissions, target resource policies, KMS
+     needs, timeout/retry/catch coverage, and recent failed state names.
+   - Extend existing Step Functions dependency parsing and IAM simulation with
+     richer task-level proof.
+
+9. **KMS-dependent path checker** _(Large)_
+   - For SQS, SNS, S3, DynamoDB streams, Lambda env encryption, and logs,
+     identify customer-managed KMS keys and check whether the Lambda role and
+     AWS service principal have the decrypt/encrypt/data-key permissions needed
+     for the specific path.
+   - Build beyond current KMS key summaries and service-specific permission
+     hints without returning key policies or decrypted data.
+
+10. **Lambda invocation path proof** _(Large)_
+    - Given a Lambda function and suspected caller, walk every required edge:
+      trigger mapping, Lambda resource policy, caller identity policy, service
+      principal, condition keys, KMS dependencies, and region/account checks.
+      Explain the first blocked edge.
+    - Compose existing Lambda dependency, permission path, event source, API
+      Gateway, EventBridge, SQS, and SNS helpers instead of duplicating them.
+
+11. **Lambda VPC outbound URL reachability check** _(Large)_
+    - Detect URL-like env vars, classify destination as public internet,
+      private DNS, AWS service endpoint, or VPC-local host, then inspect Lambda
+      subnets, route tables, NAT gateways, security groups, NACLs, and VPC
+      endpoints for likely egress failure.
+    - Extend existing Lambda network access output with target-aware URL
+      classification.
+
+12. **Private AWS API reachability check** _(Large)_
+    - For Lambdas in private subnets using AWS SDK clients, infer needed AWS
+      services from code/config hints and verify matching interface/gateway
+      endpoints, endpoint policies, private DNS, and security group ingress from
+      Lambda ENIs.
+    - Build on existing Lambda VPC endpoint discovery and service endpoint
+      override awareness.
+
+13. **Security group path simulator for Lambda** _(Large)_
+    - Given a Lambda and target host/port from env vars or integration config,
+      evaluate Lambda ENI security group egress, target security group ingress,
+      NACLs, subnet routes, and endpoint security groups.
+    - Deepen existing network access diagnostics from broad egress posture to a
+      specific path simulation.
+
+14. **DNS and split-horizon risk detector** _(Large)_
+    - For URL env vars and private hosted zone records, inspect VPC DNS
+      settings, resolver rules, private hosted zone associations, interface
+      endpoint private DNS, and conflicting public/private names.
+    - Add DNS-specific reasoning not present in current Lambda network checks.
+
+15. **Concurrency bottleneck investigator** _(Large)_
+    - Correlate Lambda reserved/provisioned concurrency, account concurrency,
+      event source maximum concurrency, SQS backlog age, throttles, async retry
+      age, and downstream service limits to explain delivery stalls.
+    - Compose existing Lambda, SQS, CloudWatch metric, and event source
+      diagnostics into a capacity-focused workflow.
+
+16. **Cross-account invocation analyzer** _(Large)_
+    - When a Lambda references queues, topics, buses, buckets, or functions in
+      another account, check both sides of IAM/resource policy trust and flag
+      missing principals, source ARN/account conditions, organization
+      condition mismatches, KMS gaps, and partition/region drift.
+    - Extend current same-account and service-specific permission checks.
+
+17. **Dead-letter and retry topology audit** _(XLarge)_
+    - Build a graph of Lambda destinations, SQS redrive policies, SNS/SQS
+      DLQs, EventBridge DLQs, and Step Functions catches. Flag loops,
+      unconsumed DLQs, too-low max receive counts, and missing alarms.
+    - Compose existing DLQ fragments from Lambda, SQS, SNS, EventBridge, Step
+      Functions, and CloudWatch alarm tools into one topology audit.
+
+18. **End-to-end transaction trace plan** _(XLarge)_
+    - Given a seed resource name, stitch likely path across API Gateway,
+      EventBridge, Step Functions, Lambda, SQS, SNS, DynamoDB streams, and logs.
+      Return ordered checks, probable breakpoints, and safe commands/tools to
+      run next.
+    - Extend current event-driven flow stitching and incident brief beyond
+      EventBridge-centered paths.
+
+19. **Risk-scored dependency health summary** _(XLarge)_
+    - For an application prefix, assemble discovered resources into a redacted
+      graph and score each edge for callability, network reachability, policy
+      completeness, retry safety, observability, and drift from expected naming
+      or region conventions.
+    - Compose current name/tag search, incident brief, dependency graphs, alarm
+      summaries, and permission checks into an application-level health view.
 
 ## Suggested Order
 
-No suggested order remains for the current goal batch.
+Use the feature candidate order above.

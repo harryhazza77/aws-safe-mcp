@@ -10,6 +10,7 @@ from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import ToolInputError
 from aws_safe_mcp.tools import resource_search
 from aws_safe_mcp.tools.resource_search import (
+    diagnose_region_partition_mismatches,
     get_cross_service_incident_brief,
     search_aws_resources,
     search_aws_resources_by_tag,
@@ -247,6 +248,49 @@ def test_get_cross_service_incident_brief_rejects_empty_query() -> None:
         get_cross_service_incident_brief(FakeRuntime(), " ")
 
 
+def test_diagnose_region_partition_mismatches_flags_arn_and_url_drift() -> None:
+    result = diagnose_region_partition_mismatches(
+        FakeRuntime(),
+        resource_refs=[
+            "arn:aws:lambda:eu-west-2:123456789012:function:dev-api",
+            "arn:aws:sqs:us-east-1:123456789012:dev-queue",
+            "https://sqs.us-east-1.amazonaws.com/123456789012/dev-queue",
+            "dev-table",
+        ],
+    )
+
+    assert result["expected_region"] == "eu-west-2"
+    assert result["expected_partition"] == "aws"
+    assert result["mismatch_count"] == 2
+    assert result["unknown_count"] == 1
+    assert result["summary"]["status"] == "mismatch"
+    assert result["findings"][1]["mismatches"] == [
+        {"field": "region", "expected": "eu-west-2", "observed": "us-east-1"}
+    ]
+    assert result["findings"][2]["kind"] == "url"
+
+
+def test_diagnose_region_partition_mismatches_checks_endpoint_overrides() -> None:
+    result = diagnose_region_partition_mismatches(
+        EndpointRuntime(),
+        resource_refs=["arn:aws-cn:s3:::dev-bucket"],
+        expected_region="cn-north-1",
+        expected_partition="aws-cn",
+    )
+
+    assert result["mismatch_count"] == 1
+    assert result["findings"][0]["status"] == "ok"
+    assert result["findings"][1]["source"] == "config_endpoint"
+    assert result["findings"][1]["mismatches"] == [
+        {"field": "partition", "expected": "aws-cn", "observed": "aws"}
+    ]
+
+
+def test_diagnose_region_partition_mismatches_rejects_blank_refs() -> None:
+    with pytest.raises(ToolInputError, match="resource_refs must not contain blank values"):
+        diagnose_region_partition_mismatches(FakeRuntime(), [" "])
+
+
 class StatefulTagRuntime(FakeRuntime):
     def __init__(self) -> None:
         self.tagging_client = FakeTaggingClient()
@@ -256,6 +300,14 @@ class StatefulTagRuntime(FakeRuntime):
             assert region == "eu-west-2"
             return self.tagging_client
         return super().client(service_name, region=region)
+
+
+class EndpointRuntime(FakeRuntime):
+    config = AwsSafeConfig(
+        allowed_account_ids=["123456789012"],
+        service_endpoint_urls={"sqs": "https://sqs.cn-north-1.amazonaws.com"},
+    )
+    region = "cn-north-1"
 
 
 class FailingTaggingClient:

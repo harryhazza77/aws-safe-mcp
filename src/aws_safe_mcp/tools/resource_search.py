@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import urlparse
 
 from botocore.exceptions import BotoCoreError, ClientError
 
@@ -154,10 +156,50 @@ def get_cross_service_incident_brief(
     }
 
 
+def diagnose_region_partition_mismatches(
+    runtime: AwsRuntime,
+    resource_refs: list[str],
+    expected_region: str | None = None,
+    expected_partition: str | None = None,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region or expected_region)
+    resolved_partition = expected_partition or "aws"
+    refs = [_require_resource_ref(value) for value in resource_refs]
+    findings = [
+        _region_partition_finding(ref, resolved_region, resolved_partition) for ref in refs
+    ]
+    endpoint_findings = _endpoint_override_findings(
+        runtime,
+        expected_region=resolved_region,
+        expected_partition=resolved_partition,
+    )
+    all_findings = [*findings, *endpoint_findings]
+    mismatches = [finding for finding in all_findings if finding["status"] == "mismatch"]
+    unknown = [finding for finding in all_findings if finding["status"] == "unknown"]
+    return {
+        "expected_region": resolved_region,
+        "expected_partition": resolved_partition,
+        "checked_count": len(all_findings),
+        "mismatch_count": len(mismatches),
+        "unknown_count": len(unknown),
+        "summary": _region_partition_summary(mismatches, unknown),
+        "findings": all_findings,
+        "warnings": [],
+    }
+
+
 def _require_tag_key(tag_key: str) -> str:
     normalized = tag_key.strip()
     if not normalized:
         raise ToolInputError("tag_key is required")
+    return normalized
+
+
+def _require_resource_ref(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ToolInputError("resource_refs must not contain blank values")
     return normalized
 
 
@@ -376,4 +418,132 @@ def _tagged_resource_group_summary(resources: list[dict[str, Any]]) -> dict[str,
         "resource_count": len(resources),
         "by_service": by_service,
         "by_resource_type": by_resource_type,
+    }
+
+
+def _region_partition_finding(
+    value: str,
+    expected_region: str,
+    expected_partition: str,
+) -> dict[str, Any]:
+    parsed = _parse_region_partition_ref(value)
+    observed_region = parsed.get("region")
+    observed_partition = parsed.get("partition")
+    mismatches: list[dict[str, str | None]] = []
+    if observed_region and observed_region != expected_region:
+        mismatches.append(
+            {
+                "field": "region",
+                "expected": expected_region,
+                "observed": observed_region,
+            }
+        )
+    if observed_partition and observed_partition != expected_partition:
+        mismatches.append(
+            {
+                "field": "partition",
+                "expected": expected_partition,
+                "observed": observed_partition,
+            }
+        )
+    status = "mismatch" if mismatches else "ok"
+    if not observed_region and not observed_partition:
+        status = "unknown"
+    return {
+        "source": "input",
+        "value": value,
+        "kind": parsed["kind"],
+        "service": parsed.get("service"),
+        "region": observed_region,
+        "partition": observed_partition,
+        "status": status,
+        "mismatches": mismatches,
+    }
+
+
+def _endpoint_override_findings(
+    runtime: AwsRuntime,
+    expected_region: str,
+    expected_partition: str,
+) -> list[dict[str, Any]]:
+    configured: list[tuple[str, str]] = []
+    if runtime.config.endpoint_url:
+        configured.append(("global", runtime.config.endpoint_url))
+    configured.extend(sorted(runtime.config.service_endpoint_urls.items()))
+    findings = []
+    for service, endpoint_url in configured:
+        finding = _region_partition_finding(endpoint_url, expected_region, expected_partition)
+        finding["source"] = "config_endpoint"
+        finding["service"] = service if service != "global" else finding.get("service")
+        findings.append(finding)
+    return findings
+
+
+def _parse_region_partition_ref(value: str) -> dict[str, str | None]:
+    arn = _parse_arn_region_partition(value)
+    if arn:
+        return arn
+    url = _parse_url_region_partition(value)
+    if url:
+        return url
+    return {
+        "kind": "name_or_unknown",
+        "service": None,
+        "region": None,
+        "partition": None,
+    }
+
+
+def _parse_arn_region_partition(value: str) -> dict[str, str | None] | None:
+    parts = value.split(":", 5)
+    if len(parts) < 6 or parts[0] != "arn":
+        return None
+    return {
+        "kind": "arn",
+        "service": parts[2] or None,
+        "region": parts[3] or None,
+        "partition": parts[1] or None,
+    }
+
+
+def _parse_url_region_partition(value: str) -> dict[str, str | None] | None:
+    parsed = urlparse(value)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    host = parsed.hostname or ""
+    host_parts = host.split(".")
+    partition = _partition_from_host(host)
+    region = _region_from_host_parts(host_parts)
+    return {
+        "kind": "url",
+        "service": host_parts[0] if host_parts else None,
+        "region": region,
+        "partition": partition,
+    }
+
+
+def _region_from_host_parts(parts: list[str]) -> str | None:
+    for part in parts:
+        if re.fullmatch(r"[a-z]{2}(?:-gov)?-[a-z]+-\d", part):
+            return part
+    return None
+
+
+def _partition_from_host(host: str) -> str | None:
+    if host.endswith(".amazonaws.com.cn"):
+        return "aws-cn"
+    if host.endswith(".amazonaws.com"):
+        return "aws"
+    return None
+
+
+def _region_partition_summary(
+    mismatches: list[dict[str, Any]],
+    unknown: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "status": "mismatch" if mismatches else "ok",
+        "mismatch_count": len(mismatches),
+        "unknown_count": len(unknown),
+        "first_mismatch": mismatches[0] if mismatches else None,
     }

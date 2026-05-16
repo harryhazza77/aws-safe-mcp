@@ -210,6 +210,8 @@ Related tools:
 
 ## Cross-Service Search
 
+- Diagnose region and partition drift across explicit ARNs, AWS URLs, queue
+  URLs, endpoint hosts, and configured endpoint overrides.
 - Search visible resources by name fragment across supported services.
 - Find candidate Lambda functions, Step Functions state machines, S3 buckets,
   DynamoDB tables, CloudWatch log groups, API Gateway APIs, and EventBridge
@@ -222,6 +224,7 @@ Related tools:
 
 Related tools:
 
+- `diagnose_region_partition_mismatches`
 - `search_aws_resources`
 - `search_aws_resources_by_tag`
 - `get_cross_service_incident_brief`
