@@ -30,6 +30,9 @@ from aws_safe_mcp.tools.eventbridge import (
     explain_eventbridge_rule_dependencies as explain_eventbridge_rule_dependencies_tool,
 )
 from aws_safe_mcp.tools.eventbridge import (
+    get_eventbridge_time_sources as get_eventbridge_time_sources_tool,
+)
+from aws_safe_mcp.tools.eventbridge import (
     investigate_eventbridge_rule_delivery as investigate_eventbridge_rule_delivery_tool,
 )
 from aws_safe_mcp.tools.eventbridge import (
@@ -589,6 +592,21 @@ def _register_eventbridge_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRu
             region=region,
             event_bus_name=event_bus_name,
             name_prefix=name_prefix,
+            max_results=max_results,
+        )
+
+    @mcp.tool()
+    @audit.tool("get_eventbridge_time_sources")
+    def get_eventbridge_time_sources(
+        region: str | None = None,
+        event_bus_name: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """Summarize EventBridge schedules, archives, replays, and Scheduler schedules."""
+        return get_eventbridge_time_sources_tool(
+            runtime,
+            region=region,
+            event_bus_name=event_bus_name,
             max_results=max_results,
         )
 

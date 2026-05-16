@@ -84,6 +84,43 @@ def list_eventbridge_rules(
     }
 
 
+def get_eventbridge_time_sources(
+    runtime: AwsRuntime,
+    region: str | None = None,
+    event_bus_name: str | None = None,
+    max_results: int | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    limit = clamp_limit(
+        max_results,
+        default=50,
+        configured_max=runtime.config.max_results,
+        label="max_results",
+    )
+    events = runtime.client("events", region=resolved_region)
+    warnings: list[str] = []
+    scheduled_rules = _scheduled_rules(events, event_bus_name, limit, warnings)
+    archives = _eventbridge_archives(events, event_bus_name, limit, warnings)
+    replays = _eventbridge_replays(events, limit, warnings)
+    schedules = _scheduler_schedules(runtime, resolved_region, limit, warnings)
+    return {
+        "region": resolved_region,
+        "event_bus_name": event_bus_name,
+        "max_results": limit,
+        "scheduled_rules": scheduled_rules,
+        "scheduler_schedules": schedules,
+        "archives": archives,
+        "replays": replays,
+        "summary": {
+            "scheduled_rule_count": len(scheduled_rules),
+            "scheduler_schedule_count": len(schedules),
+            "archive_count": len(archives),
+            "replay_count": len(replays),
+        },
+        "warnings": warnings,
+    }
+
+
 def explain_eventbridge_rule_dependencies(
     runtime: AwsRuntime,
     rule_name: str,
@@ -835,6 +872,111 @@ def _list_rules_for_bus(
     except (BotoCoreError, ClientError) as exc:
         warnings.append(str(normalize_aws_error(exc, "events.ListRules")))
     return rules
+
+
+def _scheduled_rules(
+    client: Any,
+    event_bus_name: str | None,
+    limit: int,
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    buses = [event_bus_name] if event_bus_name else ["default"]
+    rules = []
+    for bus in buses:
+        try:
+            response = client.list_rules(EventBusName=bus, Limit=limit)
+        except (BotoCoreError, ClientError) as exc:
+            warnings.append(str(normalize_aws_error(exc, "events.ListRules")))
+            continue
+        for rule in response.get("Rules", []):
+            if rule.get("ScheduleExpression"):
+                rules.append(
+                    {
+                        "name": rule.get("Name"),
+                        "arn": rule.get("Arn"),
+                        "event_bus_name": bus,
+                        "state": rule.get("State"),
+                        "schedule_expression": rule.get("ScheduleExpression"),
+                    }
+                )
+            if len(rules) >= limit:
+                return rules
+    return rules
+
+
+def _eventbridge_archives(
+    client: Any,
+    event_bus_name: str | None,
+    limit: int,
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    request: dict[str, Any] = {"Limit": limit}
+    if event_bus_name:
+        request["EventSourceArn"] = event_bus_name
+    try:
+        response = client.list_archives(**request)
+    except AttributeError:
+        warnings.append("events.ListArchives is not supported by this client")
+        return []
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "events.ListArchives")))
+        return []
+    return [
+        {
+            "name": item.get("ArchiveName"),
+            "arn": item.get("ArchiveArn"),
+            "state": item.get("State"),
+            "event_count": item.get("EventCount"),
+            "retention_days": item.get("RetentionDays"),
+            "event_source_arn": item.get("EventSourceArn"),
+        }
+        for item in response.get("Archives", [])[:limit]
+    ]
+
+
+def _eventbridge_replays(client: Any, limit: int, warnings: list[str]) -> list[dict[str, Any]]:
+    try:
+        response = client.list_replays(Limit=limit)
+    except AttributeError:
+        warnings.append("events.ListReplays is not supported by this client")
+        return []
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "events.ListReplays")))
+        return []
+    return [
+        {
+            "name": item.get("ReplayName"),
+            "state": item.get("State"),
+            "event_source_arn": item.get("EventSourceArn"),
+            "event_start_time": isoformat(item.get("EventStartTime")),
+            "event_end_time": isoformat(item.get("EventEndTime")),
+        }
+        for item in response.get("Replays", [])[:limit]
+    ]
+
+
+def _scheduler_schedules(
+    runtime: AwsRuntime,
+    region: str,
+    limit: int,
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    client = runtime.client("scheduler", region=region)
+    try:
+        response = client.list_schedules(MaxResults=limit)
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "scheduler.ListSchedules")))
+        return []
+    return [
+        {
+            "name": item.get("Name"),
+            "group_name": item.get("GroupName"),
+            "state": item.get("State"),
+            "schedule_expression": item.get("ScheduleExpression"),
+            "target_arn": (item.get("Target") or {}).get("Arn"),
+        }
+        for item in response.get("Schedules", [])[:limit]
+    ]
 
 
 def _rule_target_summary(

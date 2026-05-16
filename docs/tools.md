@@ -421,6 +421,18 @@ Inputs:
 - `name_prefix` optional
 - `max_results` optional
 
+### `get_eventbridge_time_sources`
+
+Summarizes time-driven and replay-driven EventBridge sources without publishing
+or replaying events. Includes scheduled rules, Scheduler schedules, archives,
+and replays where visible.
+
+Inputs:
+
+- `region` optional
+- `event_bus_name` optional
+- `max_results` optional
+
 ### `explain_eventbridge_rule_dependencies`
 
 Maps one EventBridge rule into event bus, target, DLQ, role, and permission

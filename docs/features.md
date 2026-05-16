@@ -89,6 +89,8 @@ Related tools:
 
 - List EventBridge rules across visible event buses or a specific event bus.
 - Summarize rule event patterns safely.
+- Summarize scheduled rules, Scheduler schedules, archives, and replays where
+  visible.
 - Map a rule to targets, DLQs, target roles, and permission checks.
 - Diagnose rule delivery using configuration, target permissions, CloudWatch
   metrics, and SQS DLQ metadata where visible.
@@ -99,6 +101,7 @@ Related tools:
 Related tools:
 
 - `list_eventbridge_rules`
+- `get_eventbridge_time_sources`
 - `explain_eventbridge_rule_dependencies`
 - `investigate_eventbridge_rule_delivery`
 - `explain_event_driven_flow`
