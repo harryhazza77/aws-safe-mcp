@@ -30,6 +30,9 @@ Related tools:
 - Map Lambda dependencies such as execution role, log group, VPC attachment,
   dead-letter target, aliases, event source mappings, and inferred permission
   checks.
+- Summarize Lambda aliases, weighted traffic routing, published versions,
+  provisioned concurrency presence, and resource policy hints without fetching
+  code package contents or returning full policy JSON.
 - Diagnose Lambda event source mappings with source state, batch/window
   settings, failure destination, filter presence, and inferred role permission
   checks without reading queue messages or stream records.
@@ -42,6 +45,7 @@ Related tools:
 - `list_lambda_functions`
 - `get_lambda_summary`
 - `get_lambda_event_source_mapping_diagnostics`
+- `get_lambda_alias_version_summary`
 - `get_lambda_recent_errors`
 - `investigate_lambda_failure`
 - `explain_lambda_dependencies`

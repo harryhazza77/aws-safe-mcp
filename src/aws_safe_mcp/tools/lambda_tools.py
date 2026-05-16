@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -158,6 +159,50 @@ def get_lambda_event_source_mapping_diagnostics(
             limit=check_limit,
             warnings=warnings,
         ),
+        "warnings": warnings,
+    }
+
+
+def get_lambda_alias_version_summary(
+    runtime: AwsRuntime,
+    function_name: str,
+    region: str | None = None,
+    max_results: int | None = None,
+) -> dict[str, Any]:
+    """Summarize Lambda aliases and published versions without fetching code."""
+
+    resolved_region = resolve_region(runtime, region)
+    required_name = require_lambda_name(function_name)
+    limit = clamp_limit(
+        max_results,
+        default=50,
+        configured_max=runtime.config.max_results,
+        label="max_results",
+    )
+    client = runtime.client("lambda", region=resolved_region)
+    aliases, alias_warnings = _lambda_aliases_for_summary(client, required_name, limit)
+    versions, version_warnings = _lambda_versions_for_summary(client, required_name, limit)
+    concurrency = _lambda_provisioned_concurrency_summary(client, required_name, aliases, versions)
+    policy = _lambda_resource_policy_summary(client, required_name)
+    warnings = [*alias_warnings, *version_warnings, *concurrency["warnings"], *policy["warnings"]]
+
+    return {
+        "function_name": required_name,
+        "region": resolved_region,
+        "summary": {
+            "alias_count": len(aliases),
+            "published_version_count": len(versions),
+            "weighted_alias_count": sum(
+                1 for alias in aliases if alias["additional_version_weights"]
+            ),
+            "provisioned_concurrency_configured": concurrency["configured"],
+            "policy_statement_count": policy["statement_count"],
+            "warning_count": len(warnings),
+        },
+        "aliases": aliases,
+        "versions": versions,
+        "provisioned_concurrency": concurrency,
+        "policy_hints": policy,
         "warnings": warnings,
     }
 
@@ -1017,6 +1062,197 @@ def _lambda_alias_summary(
         for item in response.get("Aliases", [])
     ]
     return {"available": True, "count": len(aliases), "aliases": aliases, "warnings": []}
+
+
+def _lambda_aliases_for_summary(
+    client: Any,
+    function_name: str,
+    limit: int,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    try:
+        response = client.list_aliases(FunctionName=function_name, MaxItems=min(limit, 100))
+    except (BotoCoreError, ClientError) as exc:
+        return [], [str(normalize_aws_error(exc, "lambda.ListAliases"))]
+
+    aliases = [
+        {
+            "name": item.get("Name"),
+            "function_version": item.get("FunctionVersion"),
+            "description": item.get("Description") or None,
+            "revision_id": item.get("RevisionId"),
+            "additional_version_weights": _alias_routing_weights(item.get("RoutingConfig")),
+        }
+        for item in response.get("Aliases", [])[:limit]
+    ]
+    return aliases, []
+
+
+def _alias_routing_weights(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return []
+    weights = value.get("AdditionalVersionWeights") or {}
+    if not isinstance(weights, dict):
+        return []
+    return [
+        {"function_version": str(version), "weight": weight}
+        for version, weight in sorted(weights.items())
+    ]
+
+
+def _lambda_versions_for_summary(
+    client: Any,
+    function_name: str,
+    limit: int,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    try:
+        response = client.list_versions_by_function(
+            FunctionName=function_name,
+            MaxItems=min(limit, 100),
+        )
+    except (BotoCoreError, ClientError) as exc:
+        return [], [str(normalize_aws_error(exc, "lambda.ListVersionsByFunction"))]
+
+    versions = [
+        _lambda_version_item(item)
+        for item in response.get("Versions", [])
+        if item.get("Version") != "$LATEST"
+    ][:limit]
+    return versions, []
+
+
+def _lambda_version_item(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "version": item.get("Version"),
+        "runtime": item.get("Runtime"),
+        "description": item.get("Description") or None,
+        "last_modified": item.get("LastModified"),
+        "memory_mb": item.get("MemorySize"),
+        "timeout_seconds": item.get("Timeout"),
+        "state": item.get("State"),
+        "last_update_status": item.get("LastUpdateStatus"),
+        "code_size_bytes": item.get("CodeSize"),
+    }
+
+
+def _lambda_provisioned_concurrency_summary(
+    client: Any,
+    function_name: str,
+    aliases: list[dict[str, Any]],
+    versions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    qualifiers = [str(alias["name"]) for alias in aliases if alias.get("name")]
+    qualifiers.extend(str(version["version"]) for version in versions if version.get("version"))
+    configs: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for qualifier in qualifiers:
+        try:
+            response = client.get_provisioned_concurrency_config(
+                FunctionName=function_name,
+                Qualifier=qualifier,
+            )
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code in {
+                "ProvisionedConcurrencyConfigNotFoundException",
+                "ResourceNotFoundException",
+            }:
+                continue
+            warnings.append(str(normalize_aws_error(exc, "lambda.GetProvisionedConcurrencyConfig")))
+            continue
+        except BotoCoreError as exc:
+            warnings.append(str(normalize_aws_error(exc, "lambda.GetProvisionedConcurrencyConfig")))
+            continue
+        configs.append(
+            {
+                "qualifier": qualifier,
+                "requested": response.get("RequestedProvisionedConcurrentExecutions"),
+                "available": response.get("AvailableProvisionedConcurrentExecutions"),
+                "allocated": response.get("AllocatedProvisionedConcurrentExecutions"),
+                "status": response.get("Status"),
+                "status_reason": response.get("StatusReason"),
+            }
+        )
+    return {
+        "configured": bool(configs),
+        "count": len(configs),
+        "configs": configs,
+        "warnings": warnings,
+    }
+
+
+def _lambda_resource_policy_summary(client: Any, function_name: str) -> dict[str, Any]:
+    try:
+        response = client.get_policy(FunctionName=function_name)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code in {"ResourceNotFoundException", "PolicyNotFoundException"}:
+            return _empty_lambda_policy_summary()
+        summary = _empty_lambda_policy_summary()
+        summary["warnings"] = [str(normalize_aws_error(exc, "lambda.GetPolicy"))]
+        return summary
+    except BotoCoreError as exc:
+        summary = _empty_lambda_policy_summary()
+        summary["warnings"] = [str(normalize_aws_error(exc, "lambda.GetPolicy"))]
+        return summary
+
+    policy = _parse_policy_document(response.get("Policy"))
+    statements = policy.get("Statement", []) if isinstance(policy, dict) else []
+    if isinstance(statements, dict):
+        statements = [statements]
+    service_principals: set[str] = set()
+    actions: set[str] = set()
+    for statement in statements if isinstance(statements, list) else []:
+        if not isinstance(statement, dict):
+            continue
+        service_principals.update(_policy_service_principals(statement.get("Principal")))
+        actions.update(_policy_actions(statement.get("Action")))
+    return {
+        "available": True,
+        "statement_count": len(statements) if isinstance(statements, list) else 0,
+        "service_principals": sorted(service_principals),
+        "actions": sorted(actions),
+        "warnings": [],
+    }
+
+
+def _empty_lambda_policy_summary() -> dict[str, Any]:
+    return {
+        "available": False,
+        "statement_count": 0,
+        "service_principals": [],
+        "actions": [],
+        "warnings": [],
+    }
+
+
+def _parse_policy_document(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _policy_service_principals(value: Any) -> set[str]:
+    if isinstance(value, dict):
+        service = value.get("Service")
+        if isinstance(service, str):
+            return {service}
+        if isinstance(service, list):
+            return {str(item) for item in service}
+    return set()
+
+
+def _policy_actions(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, list):
+        return {str(item) for item in value}
+    return set()
 
 
 def _lambda_event_source_summary(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,6 +13,7 @@ from aws_safe_mcp.tools.lambda_tools import (
     check_lambda_permission_path,
     explain_lambda_dependencies,
     explain_lambda_network_access,
+    get_lambda_alias_version_summary,
     get_lambda_event_source_mapping_diagnostics,
     get_lambda_recent_errors,
     get_lambda_summary,
@@ -99,7 +101,83 @@ class FakeLambdaClient:
         }
 
     def list_aliases(self, **_: Any) -> dict[str, Any]:
-        return {"Aliases": [{"Name": "live", "FunctionVersion": "3"}]}
+        return {
+            "Aliases": [
+                {
+                    "Name": "live",
+                    "FunctionVersion": "3",
+                    "Description": "production traffic",
+                    "RevisionId": "rev-live",
+                    "RoutingConfig": {"AdditionalVersionWeights": {"4": 0.1}},
+                }
+            ]
+        }
+
+    def list_versions_by_function(self, **_: Any) -> dict[str, Any]:
+        return {
+            "Versions": [
+                {"Version": "$LATEST"},
+                {
+                    "Version": "3",
+                    "Runtime": "python3.12",
+                    "Description": "stable",
+                    "LastModified": "2026-01-01T00:00:00.000+0000",
+                    "MemorySize": 256,
+                    "Timeout": 30,
+                    "State": "Active",
+                    "LastUpdateStatus": "Successful",
+                    "CodeSize": 12345,
+                },
+                {
+                    "Version": "4",
+                    "Runtime": "python3.12",
+                    "Description": "canary",
+                    "LastModified": "2026-01-02T00:00:00.000+0000",
+                    "MemorySize": 256,
+                    "Timeout": 30,
+                    "State": "Active",
+                    "LastUpdateStatus": "Successful",
+                    "CodeSize": 12346,
+                },
+            ]
+        }
+
+    def get_provisioned_concurrency_config(
+        self,
+        FunctionName: str,
+        Qualifier: str,
+    ) -> dict[str, Any]:
+        assert FunctionName == "dev-api"
+        if Qualifier != "live":
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "ProvisionedConcurrencyConfigNotFoundException",
+                        "Message": "not configured",
+                    }
+                },
+                "GetProvisionedConcurrencyConfig",
+            )
+        return {
+            "RequestedProvisionedConcurrentExecutions": 2,
+            "AvailableProvisionedConcurrentExecutions": 2,
+            "AllocatedProvisionedConcurrentExecutions": 2,
+            "Status": "READY",
+        }
+
+    def get_policy(self, **_: Any) -> dict[str, Any]:
+        return {
+            "Policy": json.dumps(
+                {
+                    "Statement": [
+                        {
+                            "Principal": {"Service": "apigateway.amazonaws.com"},
+                            "Action": "lambda:InvokeFunction",
+                        }
+                    ]
+                }
+            )
+        }
 
     def list_event_source_mappings(self, **_: Any) -> dict[str, Any]:
         return {
@@ -423,6 +501,45 @@ def test_get_lambda_summary_reports_metric_data_warnings() -> None:
 
     assert result["recent_metrics"]["available"] is True
     assert result["recent_metrics"]["warnings"] == ["Metric errors returned status PartialData"]
+
+
+def test_get_lambda_alias_version_summary_reports_safe_traffic_metadata() -> None:
+    result = get_lambda_alias_version_summary(FakeRuntime(), "dev-api")
+
+    assert result["summary"] == {
+        "alias_count": 1,
+        "published_version_count": 2,
+        "weighted_alias_count": 1,
+        "provisioned_concurrency_configured": True,
+        "policy_statement_count": 1,
+        "warning_count": 0,
+    }
+    assert result["aliases"] == [
+        {
+            "name": "live",
+            "function_version": "3",
+            "description": "production traffic",
+            "revision_id": "rev-live",
+            "additional_version_weights": [{"function_version": "4", "weight": 0.1}],
+        }
+    ]
+    assert [version["version"] for version in result["versions"]] == ["3", "4"]
+    assert result["provisioned_concurrency"]["configs"][0]["qualifier"] == "live"
+    assert result["policy_hints"]["service_principals"] == ["apigateway.amazonaws.com"]
+    assert result["policy_hints"]["actions"] == ["lambda:InvokeFunction"]
+    assert "Statement" not in result["policy_hints"]
+
+
+def test_get_lambda_alias_version_summary_keeps_optional_failures_best_effort() -> None:
+    runtime = FakeRuntime()
+    runtime.lambda_client = FailingAliasVersionLambdaClient()
+
+    result = get_lambda_alias_version_summary(runtime, "dev-api")
+
+    assert result["summary"]["alias_count"] == 0
+    assert result["summary"]["published_version_count"] == 0
+    assert result["policy_hints"]["available"] is False
+    assert len(result["warnings"]) == 3
 
 
 def test_get_lambda_event_source_mapping_diagnostics_returns_safe_metadata() -> None:
@@ -846,6 +963,26 @@ class FailingConfigurationLambdaClient(FakeLambdaClient):
                 }
             },
             "GetFunctionConfiguration",
+        )
+
+
+class FailingAliasVersionLambdaClient(FakeLambdaClient):
+    def list_aliases(self, **_: Any) -> dict[str, Any]:
+        raise ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "aliases denied"}},
+            "ListAliases",
+        )
+
+    def list_versions_by_function(self, **_: Any) -> dict[str, Any]:
+        raise ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "versions denied"}},
+            "ListVersionsByFunction",
+        )
+
+    def get_policy(self, **_: Any) -> dict[str, Any]:
+        raise ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "policy denied"}},
+            "GetPolicy",
         )
 
 

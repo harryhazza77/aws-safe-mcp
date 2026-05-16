@@ -75,6 +75,19 @@ Inputs:
 - `include_permission_checks` optional, default `true`
 - `max_permission_checks` optional
 
+### `get_lambda_alias_version_summary`
+
+Summarizes Lambda aliases and published versions without fetching code package
+contents. The result includes weighted alias routing, published version metadata,
+provisioned concurrency presence, and Lambda resource policy hints without
+returning the full policy document.
+
+Inputs:
+
+- `function_name` required
+- `region` optional
+- `max_results` optional
+
 ### `get_lambda_recent_errors`
 
 Returns recent error-like CloudWatch log events for one Lambda function. The

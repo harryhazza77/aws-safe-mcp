@@ -50,6 +50,9 @@ from aws_safe_mcp.tools.lambda_tools import (
     explain_lambda_network_access as explain_lambda_network_access_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
+    get_lambda_alias_version_summary as get_lambda_alias_version_summary_tool,
+)
+from aws_safe_mcp.tools.lambda_tools import (
     get_lambda_event_source_mapping_diagnostics as get_lambda_event_source_mapping_diagnostics_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
@@ -169,6 +172,21 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
             max_results=max_results,
             include_permission_checks=include_permission_checks,
             max_permission_checks=max_permission_checks,
+        )
+
+    @mcp.tool()
+    @audit.tool("get_lambda_alias_version_summary")
+    def get_lambda_alias_version_summary(
+        function_name: str,
+        region: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """Summarize Lambda aliases, published versions, and traffic policy hints."""
+        return get_lambda_alias_version_summary_tool(
+            runtime,
+            function_name=function_name,
+            region=region,
+            max_results=max_results,
         )
 
     @mcp.tool()
