@@ -15,6 +15,9 @@ from aws_safe_mcp.tools.apigateway import (
     investigate_api_gateway_route as investigate_api_gateway_route_tool,
 )
 from aws_safe_mcp.tools.apigateway import list_api_gateways as list_api_gateways_tool
+from aws_safe_mcp.tools.cloudwatch import (
+    check_cloudwatch_logs_writeability as check_cloudwatch_logs_writeability_tool,
+)
 from aws_safe_mcp.tools.cloudwatch import cloudwatch_log_search as cloudwatch_log_search_tool
 from aws_safe_mcp.tools.cloudwatch import (
     cloudwatch_logs_insights_query as cloudwatch_logs_insights_query_tool,
@@ -686,6 +689,21 @@ def _register_cloudwatch_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRun
             query=query,
             since_minutes=since_minutes,
             max_results=max_results,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("check_cloudwatch_logs_writeability")
+    def check_cloudwatch_logs_writeability(
+        log_group_name: str,
+        role_arn: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Check whether a role can write to one CloudWatch Logs log group."""
+        return check_cloudwatch_logs_writeability_tool(
+            runtime,
+            log_group_name=log_group_name,
+            role_arn=role_arn,
             region=region,
         )
 

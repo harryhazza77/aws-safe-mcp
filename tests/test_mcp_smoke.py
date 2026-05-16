@@ -92,6 +92,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "list_cloudwatch_log_groups",
         "cloudwatch_log_search",
         "cloudwatch_logs_insights_query",
+        "check_cloudwatch_logs_writeability",
         "list_api_gateways",
         "get_api_gateway_summary",
         "get_api_gateway_authorizer_summary",

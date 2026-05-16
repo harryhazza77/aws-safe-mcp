@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -174,6 +175,41 @@ def cloudwatch_logs_insights_query(
     }
 
 
+def check_cloudwatch_logs_writeability(
+    runtime: AwsRuntime,
+    log_group_name: str,
+    role_arn: str,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_log_group = require_log_group_name(log_group_name)
+    required_role_arn = _require_role_arn(role_arn)
+    logs = runtime.client("logs", region=resolved_region)
+    warnings: list[str] = []
+    log_group = _find_log_group(logs, required_log_group, warnings)
+    log_group_arn = _log_group_write_arn(log_group, required_log_group, resolved_region)
+    permission_checks = _logs_write_permission_checks(
+        runtime=runtime,
+        role_arn=required_role_arn,
+        log_group_arn=log_group_arn,
+        warnings=warnings,
+    )
+    return {
+        "log_group_name": required_log_group,
+        "region": resolved_region,
+        "role_arn": required_role_arn,
+        "summary": {
+            "log_group_exists": log_group is not None,
+            "retention_days": log_group.get("retention_days") if log_group else None,
+            "kms_key_configured": bool(log_group.get("kms_key_id")) if log_group else None,
+            "write_allowed": _logs_write_allowed(permission_checks),
+        },
+        "log_group": log_group,
+        "permission_checks": permission_checks,
+        "warnings": warnings,
+    }
+
+
 def list_cloudwatch_alarms(
     runtime: AwsRuntime,
     region: str | None = None,
@@ -279,14 +315,113 @@ def _require_alarm_name(alarm_name: str) -> str:
     return normalized
 
 
+def _require_role_arn(role_arn: str) -> str:
+    normalized = role_arn.strip()
+    if not normalized:
+        raise ToolInputError("role_arn is required")
+    if not re.fullmatch(r"arn:aws[a-zA-Z-]*:iam::\d{12}:role/.+", normalized):
+        raise ToolInputError("role_arn must be an IAM role ARN")
+    return normalized
+
+
 def _log_group_summary(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "log_group_name": item.get("logGroupName"),
         "arn": item.get("arn"),
         "creation_time": isoformat(_millis_to_datetime(item.get("creationTime"))),
         "retention_days": item.get("retentionInDays"),
+        "kms_key_id": item.get("kmsKeyId") or None,
         "stored_bytes": item.get("storedBytes"),
     }
+
+
+def _find_log_group(
+    client: Any,
+    log_group_name: str,
+    warnings: list[str],
+) -> dict[str, Any] | None:
+    try:
+        response = client.describe_log_groups(logGroupNamePrefix=log_group_name, limit=5)
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "logs.DescribeLogGroups")))
+        return None
+    for item in response.get("logGroups", []):
+        if item.get("logGroupName") == log_group_name:
+            return _log_group_summary(item)
+    return None
+
+
+def _log_group_write_arn(
+    log_group: dict[str, Any] | None,
+    log_group_name: str,
+    region: str,
+) -> str:
+    arn = str((log_group or {}).get("arn") or "")
+    if arn:
+        return arn if arn.endswith(":*") else f"{arn}:*"
+    return f"arn:aws:logs:{region}:*:log-group:{log_group_name}:*"
+
+
+def _logs_write_permission_checks(
+    runtime: AwsRuntime,
+    role_arn: str,
+    log_group_arn: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    actions = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    checks = []
+    try:
+        iam = runtime.client("iam", region=runtime.region)
+        response = iam.simulate_principal_policy(
+            PolicySourceArn=role_arn,
+            ActionNames=actions,
+            ResourceArns=[log_group_arn],
+        )
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "iam.SimulatePrincipalPolicy")))
+        return {
+            "enabled": True,
+            "checked_count": len(actions),
+            "summary": {"allowed": 0, "denied": 0, "unknown": len(actions)},
+            "checks": [
+                {
+                    "principal": role_arn,
+                    "action": action,
+                    "resource": log_group_arn,
+                    "decision": "unknown",
+                }
+                for action in actions
+            ],
+        }
+    for result in response.get("EvaluationResults", []):
+        decision = str(result.get("EvalDecision") or "unknown").lower()
+        checks.append(
+            {
+                "principal": role_arn,
+                "action": result.get("EvalActionName"),
+                "resource": log_group_arn,
+                "decision": "allowed" if decision == "allowed" else decision,
+            }
+        )
+    return {
+        "enabled": True,
+        "checked_count": len(checks),
+        "summary": _permission_summary(checks),
+        "checks": checks,
+    }
+
+
+def _permission_summary(checks: list[dict[str, Any]]) -> dict[str, int]:
+    allowed = sum(1 for check in checks if check.get("decision") == "allowed")
+    unknown = sum(1 for check in checks if check.get("decision") == "unknown")
+    return {"allowed": allowed, "denied": len(checks) - allowed - unknown, "unknown": unknown}
+
+
+def _logs_write_allowed(permission_checks: dict[str, Any]) -> bool | None:
+    summary = permission_checks.get("summary", {})
+    if summary.get("unknown"):
+        return None
+    return bool(permission_checks.get("checked_count")) and summary.get("denied") == 0
 
 
 def _event_summary(event: dict[str, Any], max_string_length: int) -> dict[str, Any]:

@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.cloudwatch import (
+    check_cloudwatch_logs_writeability,
     cloudwatch_log_search,
     cloudwatch_logs_insights_query,
     get_cloudwatch_alarm_summary,
@@ -138,6 +139,20 @@ class FakeCloudWatchClient:
         }
 
 
+class FakeIamClient:
+    def simulate_principal_policy(self, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "EvaluationResults": [
+                {
+                    "EvalActionName": action,
+                    "EvalDecision": "allowed",
+                    "MatchedStatements": [],
+                }
+                for action in kwargs["ActionNames"]
+            ]
+        }
+
+
 class FakeRuntime:
     def __init__(self) -> None:
         self.config = AwsSafeConfig(
@@ -149,6 +164,7 @@ class FakeRuntime:
         self.region = "eu-west-2"
         self.logs_client = FakeLogsClient()
         self.cloudwatch_client = FakeCloudWatchClient()
+        self.iam_client = FakeIamClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
         assert region == "eu-west-2"
@@ -156,6 +172,8 @@ class FakeRuntime:
             return self.logs_client
         if service_name == "cloudwatch":
             return self.cloudwatch_client
+        if service_name == "iam":
+            return self.iam_client
         raise AssertionError(f"Unexpected service {service_name}")
 
 
@@ -220,6 +238,37 @@ def test_list_cloudwatch_log_groups_returns_metadata() -> None:
     assert result["log_groups"][0]["creation_time"] == "2026-01-01T00:00:00+00:00"
     assert runtime.logs_client.last_request is not None
     assert runtime.logs_client.last_request["logGroupNamePrefix"] == "/aws/lambda/dev"
+
+
+def test_check_cloudwatch_logs_writeability_checks_log_group_and_role() -> None:
+    runtime = FakeRuntime()
+
+    result = check_cloudwatch_logs_writeability(
+        runtime,
+        log_group_name="/aws/lambda/dev-api",
+        role_arn="arn:aws:iam::123456789012:role/dev-lambda",
+    )
+
+    assert result["summary"] == {
+        "log_group_exists": True,
+        "retention_days": 14,
+        "kms_key_configured": False,
+        "write_allowed": True,
+    }
+    assert result["permission_checks"]["summary"] == {"allowed": 2, "denied": 0, "unknown": 0}
+    assert {check["action"] for check in result["permission_checks"]["checks"]} == {
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+    }
+
+
+def test_check_cloudwatch_logs_writeability_rejects_bad_role_arn() -> None:
+    with pytest.raises(ToolInputError, match="role_arn must be an IAM role ARN"):
+        check_cloudwatch_logs_writeability(
+            FakeRuntime(),
+            log_group_name="/aws/lambda/dev-api",
+            role_arn="not-a-role",
+        )
 
 
 def test_list_cloudwatch_alarms_returns_linked_resource_hints() -> None:

@@ -478,6 +478,19 @@ Inputs:
 - `max_results` optional, default `50`
 - `region` optional
 
+### `check_cloudwatch_logs_writeability`
+
+Checks whether one IAM role appears able to write to one CloudWatch Logs log
+group. The result reports whether the log group exists, retention/KMS context,
+and IAM simulation decisions for `logs:CreateLogStream` and
+`logs:PutLogEvents`.
+
+Inputs:
+
+- `log_group_name` required
+- `role_arn` required, IAM role ARN
+- `region` optional
+
 ## API Gateway
 
 ### `list_api_gateways`

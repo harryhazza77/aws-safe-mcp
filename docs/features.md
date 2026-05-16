@@ -198,6 +198,8 @@ Related tools:
 - Search one known log group with bounded `filter_log_events`.
 - Run bounded Logs Insights queries against one explicit log group with
   clamped windows/results, redaction, and broad-query guards.
+- Check whether an IAM role appears able to write to a specific CloudWatch Logs
+  log group and report retention/KMS context.
 - Compact, truncate, and redact log messages before returning them.
 - Group similar Lambda error messages during Lambda failure investigation.
 
@@ -208,6 +210,7 @@ Related tools:
 - `list_cloudwatch_log_groups`
 - `cloudwatch_log_search`
 - `cloudwatch_logs_insights_query`
+- `check_cloudwatch_logs_writeability`
 - `get_lambda_recent_errors`
 - `investigate_lambda_failure`
 
