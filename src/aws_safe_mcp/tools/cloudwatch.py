@@ -118,10 +118,98 @@ def cloudwatch_log_search(
     }
 
 
+def list_cloudwatch_alarms(
+    runtime: AwsRuntime,
+    region: str | None = None,
+    name_prefix: str | None = None,
+    max_results: int | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    limit = clamp_limit(
+        max_results,
+        default=50,
+        configured_max=runtime.config.max_results,
+        label="max_results",
+    )
+    client = runtime.client("cloudwatch", region=resolved_region)
+    request: dict[str, Any] = {"MaxRecords": min(limit, 100)}
+    if name_prefix:
+        request["AlarmNamePrefix"] = name_prefix
+
+    alarms: list[dict[str, Any]] = []
+    next_token: str | None = None
+    try:
+        while len(alarms) < limit:
+            page_request = dict(request)
+            if next_token:
+                page_request["NextToken"] = next_token
+            response = client.describe_alarms(**page_request)
+            for item in response.get("MetricAlarms", []):
+                alarms.append(_metric_alarm_summary(item))
+                if len(alarms) >= limit:
+                    break
+            if len(alarms) < limit:
+                for item in response.get("CompositeAlarms", []):
+                    alarms.append(_composite_alarm_summary(item))
+                    if len(alarms) >= limit:
+                        break
+            next_token = response.get("NextToken")
+            if not next_token:
+                break
+    except (BotoCoreError, ClientError) as exc:
+        raise normalize_aws_error(exc, "cloudwatch.DescribeAlarms") from exc
+
+    return {
+        "region": resolved_region,
+        "name_prefix": name_prefix,
+        "max_results": limit,
+        "count": len(alarms),
+        "is_truncated": bool(next_token),
+        "summary": _alarm_inventory_summary(alarms),
+        "alarms": alarms,
+    }
+
+
+def get_cloudwatch_alarm_summary(
+    runtime: AwsRuntime,
+    alarm_name: str,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_alarm_name = _require_alarm_name(alarm_name)
+    client = runtime.client("cloudwatch", region=resolved_region)
+    try:
+        response = client.describe_alarms(AlarmNames=[required_alarm_name])
+    except (BotoCoreError, ClientError) as exc:
+        raise normalize_aws_error(exc, "cloudwatch.DescribeAlarms") from exc
+
+    alarm: dict[str, Any] | None
+    metric_alarms = response.get("MetricAlarms", [])
+    if metric_alarms:
+        alarm = _metric_alarm_summary(metric_alarms[0])
+    else:
+        composite_alarms = response.get("CompositeAlarms", [])
+        alarm = _composite_alarm_summary(composite_alarms[0]) if composite_alarms else None
+
+    return {
+        "region": resolved_region,
+        "alarm_name": required_alarm_name,
+        "found": alarm is not None,
+        "alarm": alarm,
+    }
+
+
 def _require_query(query: str) -> str:
     normalized = query.strip()
     if not normalized:
         raise ToolInputError("query is required")
+    return normalized
+
+
+def _require_alarm_name(alarm_name: str) -> str:
+    normalized = alarm_name.strip()
+    if not normalized:
+        raise ToolInputError("alarm_name is required")
     return normalized
 
 
@@ -143,6 +231,118 @@ def _event_summary(event: dict[str, Any], max_string_length: int) -> dict[str, A
         "log_stream_name": event.get("logStreamName"),
         "message": redacted,
         "truncated": len(message) > max_string_length or len(redacted) > max_string_length,
+    }
+
+
+def _metric_alarm_summary(item: dict[str, Any]) -> dict[str, Any]:
+    dimensions = _metric_dimensions(item.get("Dimensions"))
+    return {
+        "type": "metric",
+        "alarm_name": item.get("AlarmName"),
+        "alarm_arn": item.get("AlarmArn"),
+        "state_value": item.get("StateValue"),
+        "state_updated": isoformat(item.get("StateUpdatedTimestamp")),
+        "actions_enabled": item.get("ActionsEnabled"),
+        "alarm_action_count": len(item.get("AlarmActions", [])),
+        "ok_action_count": len(item.get("OKActions", [])),
+        "insufficient_data_action_count": len(item.get("InsufficientDataActions", [])),
+        "namespace": item.get("Namespace"),
+        "metric_name": item.get("MetricName"),
+        "dimensions": dimensions,
+        "statistic": item.get("Statistic") or item.get("ExtendedStatistic"),
+        "period_seconds": item.get("Period"),
+        "evaluation_periods": item.get("EvaluationPeriods"),
+        "datapoints_to_alarm": item.get("DatapointsToAlarm"),
+        "threshold": item.get("Threshold"),
+        "comparison_operator": item.get("ComparisonOperator"),
+        "treat_missing_data": item.get("TreatMissingData"),
+        "inferred_resources": _alarm_inferred_resources(item.get("Namespace"), dimensions),
+    }
+
+
+def _composite_alarm_summary(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "composite",
+        "alarm_name": item.get("AlarmName"),
+        "alarm_arn": item.get("AlarmArn"),
+        "state_value": item.get("StateValue"),
+        "state_updated": isoformat(item.get("StateUpdatedTimestamp")),
+        "actions_enabled": item.get("ActionsEnabled"),
+        "alarm_action_count": len(item.get("AlarmActions", [])),
+        "ok_action_count": len(item.get("OKActions", [])),
+        "insufficient_data_action_count": len(item.get("InsufficientDataActions", [])),
+        "alarm_rule_present": bool(item.get("AlarmRule")),
+        "inferred_resources": [],
+    }
+
+
+def _metric_dimensions(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    dimensions = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        dimensions.append(
+            {"name": str(item.get("Name") or ""), "value": str(item.get("Value") or "")}
+        )
+    return dimensions
+
+
+def _alarm_inferred_resources(
+    namespace: Any,
+    dimensions: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    service = _alarm_namespace_service(namespace)
+    resources = []
+    for dimension in dimensions:
+        resource_type = _dimension_resource_type(service, dimension["name"])
+        if resource_type:
+            resources.append(
+                {
+                    "service": service,
+                    "resource_type": resource_type,
+                    "name": dimension["value"],
+                }
+            )
+    return resources
+
+
+def _alarm_namespace_service(namespace: Any) -> str:
+    mapping = {
+        "AWS/Lambda": "lambda",
+        "AWS/ApiGateway": "apigateway",
+        "AWS/States": "stepfunctions",
+        "AWS/SQS": "sqs",
+        "AWS/Events": "eventbridge",
+    }
+    return mapping.get(str(namespace), "unknown")
+
+
+def _dimension_resource_type(service: str, dimension_name: str) -> str | None:
+    by_service = {
+        "lambda": {"FunctionName": "lambda_function"},
+        "apigateway": {"ApiName": "api", "ApiId": "api", "Stage": "stage"},
+        "stepfunctions": {"StateMachineArn": "state_machine", "ActivityArn": "activity"},
+        "sqs": {"QueueName": "queue"},
+        "eventbridge": {"RuleName": "rule"},
+    }
+    return by_service.get(service, {}).get(dimension_name)
+
+
+def _alarm_inventory_summary(alarms: list[dict[str, Any]]) -> dict[str, Any]:
+    states: dict[str, int] = {}
+    services: dict[str, int] = {}
+    for alarm in alarms:
+        state = str(alarm.get("state_value") or "UNKNOWN")
+        states[state] = states.get(state, 0) + 1
+        for resource in alarm.get("inferred_resources", []):
+            service = str(resource.get("service") or "unknown")
+            services[service] = services.get(service, 0) + 1
+    return {
+        "by_state": states,
+        "by_linked_service": services,
+        "alarm_count": len(alarms),
     }
 
 

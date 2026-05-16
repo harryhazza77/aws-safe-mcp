@@ -7,7 +7,12 @@ from botocore.exceptions import ClientError
 
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
-from aws_safe_mcp.tools.cloudwatch import cloudwatch_log_search, list_cloudwatch_log_groups
+from aws_safe_mcp.tools.cloudwatch import (
+    cloudwatch_log_search,
+    get_cloudwatch_alarm_summary,
+    list_cloudwatch_alarms,
+    list_cloudwatch_log_groups,
+)
 
 
 class FakeLogsClient:
@@ -47,6 +52,65 @@ class FakeLogsClient:
         }
 
 
+class FakeCloudWatchClient:
+    def __init__(self) -> None:
+        self.last_request: dict[str, Any] | None = None
+
+    def describe_alarms(self, **kwargs: Any) -> dict[str, Any]:
+        self.last_request = kwargs
+        alarms = [
+            {
+                "AlarmName": "dev-api-errors",
+                "AlarmArn": "arn:aws:cloudwatch:eu-west-2:123456789012:alarm:dev-api-errors",
+                "StateValue": "ALARM",
+                "StateUpdatedTimestamp": "2026-01-01T00:00:00+00:00",
+                "ActionsEnabled": True,
+                "AlarmActions": ["arn:aws:sns:eu-west-2:123456789012:ops"],
+                "Namespace": "AWS/Lambda",
+                "MetricName": "Errors",
+                "Dimensions": [{"Name": "FunctionName", "Value": "dev-api"}],
+                "Statistic": "Sum",
+                "Period": 60,
+                "EvaluationPeriods": 2,
+                "DatapointsToAlarm": 2,
+                "Threshold": 1.0,
+                "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+                "TreatMissingData": "notBreaching",
+            },
+            {
+                "AlarmName": "dev-queue-depth",
+                "AlarmArn": "arn:aws:cloudwatch:eu-west-2:123456789012:alarm:dev-queue-depth",
+                "StateValue": "OK",
+                "ActionsEnabled": False,
+                "Namespace": "AWS/SQS",
+                "MetricName": "ApproximateNumberOfMessagesVisible",
+                "Dimensions": [{"Name": "QueueName", "Value": "dev-queue"}],
+                "Statistic": "Average",
+                "Period": 300,
+                "EvaluationPeriods": 1,
+                "Threshold": 10.0,
+                "ComparisonOperator": "GreaterThanThreshold",
+            },
+        ]
+        if "AlarmNames" in kwargs:
+            names = set(kwargs["AlarmNames"])
+            alarms = [alarm for alarm in alarms if alarm["AlarmName"] in names]
+        return {
+            "MetricAlarms": alarms,
+            "CompositeAlarms": [
+                {
+                    "AlarmName": "dev-composite",
+                    "AlarmArn": "arn:aws:cloudwatch:eu-west-2:123456789012:alarm:dev-composite",
+                    "StateValue": "OK",
+                    "ActionsEnabled": True,
+                    "AlarmRule": 'ALARM("dev-api-errors")',
+                }
+            ]
+            if "AlarmNames" not in kwargs
+            else [],
+        }
+
+
 class FakeRuntime:
     def __init__(self) -> None:
         self.config = AwsSafeConfig(
@@ -57,11 +121,15 @@ class FakeRuntime:
         )
         self.region = "eu-west-2"
         self.logs_client = FakeLogsClient()
+        self.cloudwatch_client = FakeCloudWatchClient()
 
     def client(self, service_name: str, region: str | None = None) -> Any:
-        assert service_name == "logs"
         assert region == "eu-west-2"
-        return self.logs_client
+        if service_name == "logs":
+            return self.logs_client
+        if service_name == "cloudwatch":
+            return self.cloudwatch_client
+        raise AssertionError(f"Unexpected service {service_name}")
 
 
 def test_cloudwatch_log_search_returns_truncated_bounded_events() -> None:
@@ -102,6 +170,38 @@ def test_list_cloudwatch_log_groups_returns_metadata() -> None:
     assert runtime.logs_client.last_request["logGroupNamePrefix"] == "/aws/lambda/dev"
 
 
+def test_list_cloudwatch_alarms_returns_linked_resource_hints() -> None:
+    runtime = FakeRuntime()
+
+    result = list_cloudwatch_alarms(runtime, name_prefix="dev", max_results=5)
+
+    assert result["count"] == 3
+    assert result["summary"]["by_state"] == {"ALARM": 1, "OK": 2}
+    assert result["summary"]["by_linked_service"] == {"lambda": 1, "sqs": 1}
+    lambda_alarm = result["alarms"][0]
+    assert lambda_alarm["alarm_name"] == "dev-api-errors"
+    assert lambda_alarm["namespace"] == "AWS/Lambda"
+    assert lambda_alarm["dimensions"] == [{"name": "FunctionName", "value": "dev-api"}]
+    assert lambda_alarm["inferred_resources"] == [
+        {"service": "lambda", "resource_type": "lambda_function", "name": "dev-api"}
+    ]
+    assert lambda_alarm["alarm_action_count"] == 1
+    assert runtime.cloudwatch_client.last_request is not None
+    assert runtime.cloudwatch_client.last_request["AlarmNamePrefix"] == "dev"
+
+
+def test_get_cloudwatch_alarm_summary_returns_one_alarm() -> None:
+    runtime = FakeRuntime()
+
+    result = get_cloudwatch_alarm_summary(runtime, "dev-api-errors")
+
+    assert result["found"] is True
+    assert result["alarm"]["alarm_name"] == "dev-api-errors"
+    assert result["alarm"]["state_value"] == "ALARM"
+    assert result["alarm"]["inferred_resources"][0]["service"] == "lambda"
+    assert runtime.cloudwatch_client.last_request == {"AlarmNames": ["dev-api-errors"]}
+
+
 def test_cloudwatch_log_search_follows_next_token_until_limit() -> None:
     runtime = FakeRuntime()
     runtime.logs_client = PaginatedLogsClient()
@@ -123,6 +223,11 @@ def test_cloudwatch_log_search_follows_next_token_until_limit() -> None:
 def test_cloudwatch_log_search_rejects_empty_query() -> None:
     with pytest.raises(ToolInputError, match="query is required"):
         cloudwatch_log_search(FakeRuntime(), "/aws/lambda/dev-api", query=" ")
+
+
+def test_get_cloudwatch_alarm_summary_rejects_empty_name() -> None:
+    with pytest.raises(ToolInputError, match="alarm_name is required"):
+        get_cloudwatch_alarm_summary(FakeRuntime(), " ")
 
 
 def test_cloudwatch_log_search_rejects_invalid_limits() -> None:
@@ -160,6 +265,22 @@ def test_list_cloudwatch_log_groups_normalizes_aws_errors() -> None:
 
     with pytest.raises(AwsToolError, match="AWS logs.DescribeLogGroups AccessDenied"):
         list_cloudwatch_log_groups(runtime)
+
+
+def test_list_cloudwatch_alarms_normalizes_aws_errors() -> None:
+    runtime = FakeRuntime()
+    runtime.cloudwatch_client = FailingCloudWatchClient()
+
+    with pytest.raises(AwsToolError, match="AWS cloudwatch.DescribeAlarms AccessDenied"):
+        list_cloudwatch_alarms(runtime)
+
+
+class FailingCloudWatchClient:
+    def describe_alarms(self, **_: Any) -> dict[str, Any]:
+        raise ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "denied"}},
+            "DescribeAlarms",
+        )
 
 
 class PaginatedLogsClient:

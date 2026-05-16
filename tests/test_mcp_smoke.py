@@ -81,6 +81,8 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "explain_sns_topic_dependencies",
         "list_dynamodb_tables",
         "dynamodb_table_summary",
+        "list_cloudwatch_alarms",
+        "get_cloudwatch_alarm_summary",
         "list_cloudwatch_log_groups",
         "cloudwatch_log_search",
         "list_api_gateways",

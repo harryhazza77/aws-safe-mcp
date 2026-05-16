@@ -153,6 +153,8 @@ Related tools:
 
 ## Logs And Failure Signals
 
+- List CloudWatch alarms and summarize a named alarm with state, metric shape,
+  action counts, and likely linked resources from dimensions.
 - List CloudWatch log groups by prefix.
 - Search one known log group with bounded `filter_log_events`.
 - Compact, truncate, and redact log messages before returning them.
@@ -160,6 +162,8 @@ Related tools:
 
 Related tools:
 
+- `list_cloudwatch_alarms`
+- `get_cloudwatch_alarm_summary`
 - `list_cloudwatch_log_groups`
 - `cloudwatch_log_search`
 - `get_lambda_recent_errors`

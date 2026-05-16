@@ -17,6 +17,10 @@ from aws_safe_mcp.tools.apigateway import (
 from aws_safe_mcp.tools.apigateway import list_api_gateways as list_api_gateways_tool
 from aws_safe_mcp.tools.cloudwatch import cloudwatch_log_search as cloudwatch_log_search_tool
 from aws_safe_mcp.tools.cloudwatch import (
+    get_cloudwatch_alarm_summary as get_cloudwatch_alarm_summary_tool,
+)
+from aws_safe_mcp.tools.cloudwatch import list_cloudwatch_alarms as list_cloudwatch_alarms_tool
+from aws_safe_mcp.tools.cloudwatch import (
     list_cloudwatch_log_groups as list_cloudwatch_log_groups_tool,
 )
 from aws_safe_mcp.tools.dynamodb import (
@@ -497,6 +501,34 @@ def _register_sns_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
 
 
 def _register_cloudwatch_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -> None:
+    @mcp.tool()
+    @audit.tool("list_cloudwatch_alarms")
+    def list_cloudwatch_alarms(
+        region: str | None = None,
+        name_prefix: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """List CloudWatch alarms with linked resource hints."""
+        return list_cloudwatch_alarms_tool(
+            runtime,
+            region=region,
+            name_prefix=name_prefix,
+            max_results=max_results,
+        )
+
+    @mcp.tool()
+    @audit.tool("get_cloudwatch_alarm_summary")
+    def get_cloudwatch_alarm_summary(
+        alarm_name: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Summarize one CloudWatch alarm and likely linked resources."""
+        return get_cloudwatch_alarm_summary_tool(
+            runtime,
+            alarm_name=alarm_name,
+            region=region,
+        )
+
     @mcp.tool()
     @audit.tool("list_cloudwatch_log_groups")
     def list_cloudwatch_log_groups(

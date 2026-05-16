@@ -342,6 +342,30 @@ Inputs:
 - `include_permission_checks` optional, default `true`
 - `max_permission_checks` optional
 
+## CloudWatch Alarms
+
+### `list_cloudwatch_alarms`
+
+Lists CloudWatch metric and composite alarms with state, action counts, metric
+shape, dimensions, and inferred linked resource hints for supported namespaces.
+
+Inputs:
+
+- `region` optional
+- `name_prefix` optional
+- `max_results` optional
+
+### `get_cloudwatch_alarm_summary`
+
+Summarizes one CloudWatch alarm by name, including likely linked Lambda, API
+Gateway, Step Functions, SQS, or EventBridge resources when dimensions identify
+them.
+
+Inputs:
+
+- `alarm_name` required
+- `region` optional
+
 ## CloudWatch Logs
 
 ### `list_cloudwatch_log_groups`
