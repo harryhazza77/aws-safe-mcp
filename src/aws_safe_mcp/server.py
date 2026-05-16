@@ -17,6 +17,9 @@ from aws_safe_mcp.tools.apigateway import (
 from aws_safe_mcp.tools.apigateway import list_api_gateways as list_api_gateways_tool
 from aws_safe_mcp.tools.cloudwatch import cloudwatch_log_search as cloudwatch_log_search_tool
 from aws_safe_mcp.tools.cloudwatch import (
+    cloudwatch_logs_insights_query as cloudwatch_logs_insights_query_tool,
+)
+from aws_safe_mcp.tools.cloudwatch import (
     get_cloudwatch_alarm_summary as get_cloudwatch_alarm_summary_tool,
 )
 from aws_safe_mcp.tools.cloudwatch import list_cloudwatch_alarms as list_cloudwatch_alarms_tool
@@ -555,6 +558,25 @@ def _register_cloudwatch_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRun
     ) -> dict[str, object]:
         """Search one CloudWatch log group with bounded filter_log_events."""
         return cloudwatch_log_search_tool(
+            runtime,
+            log_group_name=log_group_name,
+            query=query,
+            since_minutes=since_minutes,
+            max_results=max_results,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("cloudwatch_logs_insights_query")
+    def cloudwatch_logs_insights_query(
+        log_group_name: str,
+        query: str,
+        since_minutes: int | None = 60,
+        max_results: int | None = 50,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Run a bounded Logs Insights query against one log group."""
+        return cloudwatch_logs_insights_query_tool(
             runtime,
             log_group_name=log_group_name,
             query=query,

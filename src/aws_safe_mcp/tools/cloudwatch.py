@@ -118,6 +118,62 @@ def cloudwatch_log_search(
     }
 
 
+def cloudwatch_logs_insights_query(
+    runtime: AwsRuntime,
+    log_group_name: str,
+    query: str,
+    since_minutes: int | None = 60,
+    max_results: int | None = 50,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_log_group = require_log_group_name(log_group_name)
+    query_string = _require_logs_insights_query(query)
+    window_minutes = clamp_since_minutes(
+        since_minutes,
+        default=60,
+        configured_max=runtime.config.max_since_minutes,
+    )
+    limit = clamp_limit(
+        max_results,
+        default=50,
+        configured_max=runtime.config.max_results,
+        label="max_results",
+    )
+    client = runtime.client("logs", region=resolved_region)
+    end = datetime.now(UTC)
+    start = end - timedelta(minutes=window_minutes)
+    try:
+        started = client.start_query(
+            logGroupName=required_log_group,
+            startTime=int(start.timestamp()),
+            endTime=int(end.timestamp()),
+            queryString=query_string,
+            limit=limit,
+        )
+        query_id = str(started.get("queryId") or "")
+        response = client.get_query_results(queryId=query_id) if query_id else {}
+    except (BotoCoreError, ClientError) as exc:
+        raise normalize_aws_error(exc, "logs.StartQuery") from exc
+
+    results = _logs_insights_results(
+        response.get("results", []),
+        runtime.config.redaction.max_string_length,
+        limit,
+    )
+    return {
+        "log_group_name": required_log_group,
+        "region": resolved_region,
+        "query": query_string,
+        "query_id": query_id,
+        "status": response.get("status", "Unknown"),
+        "window_minutes": window_minutes,
+        "count": len(results),
+        "results": results,
+        "statistics": _logs_insights_statistics(response.get("statistics")),
+    }
+
+
 def list_cloudwatch_alarms(
     runtime: AwsRuntime,
     region: str | None = None,
@@ -206,6 +262,16 @@ def _require_query(query: str) -> str:
     return normalized
 
 
+def _require_logs_insights_query(query: str) -> str:
+    normalized = _require_query(query)
+    lowered = normalized.lower()
+    if "source " in lowered or lowered.startswith("source"):
+        raise ToolInputError("query must target the provided log_group_name, not SOURCE")
+    if "unmask" in lowered:
+        raise ToolInputError("query must not use unmask")
+    return normalized
+
+
 def _require_alarm_name(alarm_name: str) -> str:
     normalized = alarm_name.strip()
     if not normalized:
@@ -231,6 +297,40 @@ def _event_summary(event: dict[str, Any], max_string_length: int) -> dict[str, A
         "log_stream_name": event.get("logStreamName"),
         "message": redacted,
         "truncated": len(message) > max_string_length or len(redacted) > max_string_length,
+    }
+
+
+def _logs_insights_results(
+    rows: Any,
+    max_string_length: int,
+    limit: int,
+) -> list[dict[str, str]]:
+    if not isinstance(rows, list):
+        return []
+    results = []
+    for row in rows[:limit]:
+        if not isinstance(row, list):
+            continue
+        result: dict[str, str] = {}
+        for cell in row:
+            if not isinstance(cell, dict):
+                continue
+            field = str(cell.get("field") or "")
+            if not field or field.startswith("@ptr"):
+                continue
+            value = compact_log_message(str(cell.get("value") or ""))
+            result[field] = redact_text(value, RedactionConfig(max_string_length=max_string_length))
+        results.append(result)
+    return results
+
+
+def _logs_insights_statistics(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "records_matched": value.get("recordsMatched"),
+        "records_scanned": value.get("recordsScanned"),
+        "bytes_scanned": value.get("bytesScanned"),
     }
 
 

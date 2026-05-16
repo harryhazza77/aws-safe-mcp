@@ -9,6 +9,7 @@ from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.cloudwatch import (
     cloudwatch_log_search,
+    cloudwatch_logs_insights_query,
     get_cloudwatch_alarm_summary,
     list_cloudwatch_alarms,
     list_cloudwatch_log_groups,
@@ -49,6 +50,32 @@ class FakeLogsClient:
                     "storedBytes": 1234,
                 }
             ]
+        }
+
+    def start_query(self, **kwargs: Any) -> dict[str, Any]:
+        self.last_request = kwargs
+        return {"queryId": "query-1"}
+
+    def get_query_results(self, **kwargs: Any) -> dict[str, Any]:
+        self.last_request = kwargs
+        return {
+            "status": "Complete",
+            "results": [
+                [
+                    {"field": "@timestamp", "value": "2026-01-01T00:00:00.000Z"},
+                    {"field": "@message", "value": "ERROR token=must-not-leak"},
+                    {"field": "@ptr", "value": "opaque-pointer"},
+                ],
+                [
+                    {"field": "@timestamp", "value": "2026-01-01T00:01:00.000Z"},
+                    {"field": "count", "value": "2"},
+                ],
+            ],
+            "statistics": {
+                "recordsMatched": 2.0,
+                "recordsScanned": 10.0,
+                "bytesScanned": 1000.0,
+            },
         }
 
 
@@ -158,6 +185,31 @@ def test_cloudwatch_log_search_returns_truncated_bounded_events() -> None:
     assert runtime.logs_client.last_request["limit"] == 1
 
 
+def test_cloudwatch_logs_insights_query_returns_redacted_bounded_rows() -> None:
+    runtime = FakeRuntime()
+
+    result = cloudwatch_logs_insights_query(
+        runtime,
+        "/aws/lambda/dev-api",
+        "fields @timestamp, @message | filter @message like /ERROR/",
+        since_minutes=999,
+        max_results=1,
+    )
+
+    assert result["query_id"] == "query-1"
+    assert result["status"] == "Complete"
+    assert result["window_minutes"] == 120
+    assert result["count"] == 1
+    assert result["results"] == [
+        {
+            "@timestamp": "2026-01-01T00:00:00.000Z",
+            "@message": "ERROR token=[REDACTED]",
+        }
+    ]
+    assert "must-not-leak" not in str(result)
+    assert result["statistics"]["records_matched"] == 2.0
+
+
 def test_list_cloudwatch_log_groups_returns_metadata() -> None:
     runtime = FakeRuntime()
 
@@ -225,6 +277,13 @@ def test_cloudwatch_log_search_rejects_empty_query() -> None:
         cloudwatch_log_search(FakeRuntime(), "/aws/lambda/dev-api", query=" ")
 
 
+def test_cloudwatch_logs_insights_query_rejects_broad_or_unmasked_queries() -> None:
+    with pytest.raises(ToolInputError, match="provided log_group_name"):
+        cloudwatch_logs_insights_query(FakeRuntime(), "/aws/lambda/dev-api", query="SOURCE '*'")
+    with pytest.raises(ToolInputError, match="must not use unmask"):
+        cloudwatch_logs_insights_query(FakeRuntime(), "/aws/lambda/dev-api", query="fields unmask")
+
+
 def test_get_cloudwatch_alarm_summary_rejects_empty_name() -> None:
     with pytest.raises(ToolInputError, match="alarm_name is required"):
         get_cloudwatch_alarm_summary(FakeRuntime(), " ")
@@ -245,6 +304,18 @@ def test_cloudwatch_log_search_normalizes_aws_errors() -> None:
         cloudwatch_log_search(runtime, "/aws/lambda/dev-api", query="ERROR")
 
 
+def test_cloudwatch_logs_insights_query_normalizes_aws_errors() -> None:
+    runtime = FakeRuntime()
+    runtime.logs_client = FailingLogsClient()
+
+    with pytest.raises(AwsToolError, match="AWS logs.StartQuery AccessDenied"):
+        cloudwatch_logs_insights_query(
+            runtime,
+            "/aws/lambda/dev-api",
+            query="fields @timestamp",
+        )
+
+
 class FailingLogsClient:
     def describe_log_groups(self, **_: Any) -> dict[str, Any]:
         raise ClientError(
@@ -256,6 +327,12 @@ class FailingLogsClient:
         raise ClientError(
             {"Error": {"Code": "AccessDenied", "Message": "denied"}},
             "FilterLogEvents",
+        )
+
+    def start_query(self, **_: Any) -> dict[str, Any]:
+        raise ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "denied"}},
+            "StartQuery",
         )
 
 

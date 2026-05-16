@@ -391,6 +391,21 @@ Inputs:
 - `max_results` optional, default `50`
 - `region` optional
 
+### `cloudwatch_logs_insights_query`
+
+Runs a bounded CloudWatch Logs Insights query against one explicitly provided
+log group. The tool clamps the time window and result count, rejects broad
+`SOURCE` and `unmask` queries, redacts field values, and returns the current
+query status plus any immediately available rows.
+
+Inputs:
+
+- `log_group_name` required
+- `query` required, Logs Insights query string
+- `since_minutes` optional, default `60`
+- `max_results` optional, default `50`
+- `region` optional
+
 ## API Gateway
 
 ### `list_api_gateways`

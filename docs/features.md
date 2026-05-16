@@ -157,6 +157,8 @@ Related tools:
   action counts, and likely linked resources from dimensions.
 - List CloudWatch log groups by prefix.
 - Search one known log group with bounded `filter_log_events`.
+- Run bounded Logs Insights queries against one explicit log group with
+  clamped windows/results, redaction, and broad-query guards.
 - Compact, truncate, and redact log messages before returning them.
 - Group similar Lambda error messages during Lambda failure investigation.
 
@@ -166,6 +168,7 @@ Related tools:
 - `get_cloudwatch_alarm_summary`
 - `list_cloudwatch_log_groups`
 - `cloudwatch_log_search`
+- `cloudwatch_logs_insights_query`
 - `get_lambda_recent_errors`
 - `investigate_lambda_failure`
 
