@@ -282,6 +282,40 @@ def export_application_dependency_graph(
     }
 
 
+def run_first_blocked_edge_incident(
+    runtime: AwsRuntime,
+    seed_resource: str,
+    symptom: str,
+    region: str | None = None,
+    max_matches: int | None = None,
+) -> dict[str, Any]:
+    seed = seed_resource.strip()
+    normalized_symptom = symptom.strip()
+    if not seed:
+        raise ToolInputError("seed_resource is required")
+    if not normalized_symptom:
+        raise ToolInputError("symptom is required")
+    trace = plan_end_to_end_transaction_trace(
+        runtime,
+        seed,
+        region=region,
+        max_matches=max_matches,
+    )
+    first_stop = _first_blocked_edge(trace)
+    checked = _checked_before_stop(trace.get("trace_plan", []), first_stop)
+    return {
+        "seed_resource": seed,
+        "symptom": normalized_symptom,
+        "region": region or runtime.region,
+        "checked": checked,
+        "blocked": first_stop if first_stop["status"] == "blocked" else None,
+        "unknown": first_stop if first_stop["status"] == "unknown" else None,
+        "next_safest_tool": _next_safest_tool(first_stop),
+        "source_trace": trace,
+        "warnings": trace.get("source_brief", {}).get("warnings", []),
+    }
+
+
 def diagnose_region_partition_mismatches(
     runtime: AwsRuntime,
     resource_refs: list[str],
@@ -528,6 +562,80 @@ def _application_graph_node(resource: dict[str, Any]) -> dict[str, Any]:
         "resource_type": resource.get("resource_type"),
         "summary": resource.get("summary", {}),
     }
+
+
+def _first_blocked_edge(trace: dict[str, Any]) -> dict[str, Any]:
+    brief = trace.get("source_brief", {})
+    alarm_matches = brief.get("alarm_matches", [])
+    if isinstance(alarm_matches, list) and alarm_matches:
+        alarm = alarm_matches[0]
+        return {
+            "status": "blocked",
+            "stage": "cloudwatch",
+            "resource": alarm.get("alarm_name"),
+            "reason": "matching alarm is active or relevant to symptom",
+            "evidence": {
+                "metric": alarm.get("metric_name"),
+                "state": alarm.get("state_value"),
+            },
+        }
+    for context in brief.get("lambda_context", []):
+        if context.get("recent_error_count"):
+            return {
+                "status": "blocked",
+                "stage": "lambda",
+                "resource": context.get("function_name"),
+                "reason": "recent Lambda error groups are present",
+                "evidence": {
+                    "recent_error_count": context.get("recent_error_count"),
+                    "groups": context.get("recent_error_groups", []),
+                },
+            }
+    steps = trace.get("trace_plan", [])
+    if steps:
+        step = steps[0]
+        return {
+            "status": "unknown",
+            "stage": step.get("service"),
+            "resource": step.get("resource"),
+            "reason": step.get("check"),
+            "evidence": {},
+        }
+    return {
+        "status": "unknown",
+        "stage": "discovery",
+        "resource": trace.get("seed_resource"),
+        "reason": "no matching resources found for seed",
+        "evidence": {},
+    }
+
+
+def _checked_before_stop(
+    steps: list[dict[str, Any]],
+    first_stop: dict[str, Any],
+) -> list[dict[str, Any]]:
+    checked = []
+    for step in steps:
+        if step.get("service") == first_stop.get("stage") and step.get(
+            "resource"
+        ) == first_stop.get("resource"):
+            break
+        checked.append(step)
+    return checked
+
+
+def _next_safest_tool(first_stop: dict[str, Any]) -> str:
+    return {
+        "cloudwatch": "build_log_signal_correlation_timeline",
+        "lambda": "get_lambda_recent_errors",
+        "apigateway": "analyze_api_gateway_authorizer_failures",
+        "eventbridge": "audit_eventbridge_target_retry_dlq_safety",
+        "stepfunctions": "audit_step_function_retry_catch_safety",
+        "sqs": "investigate_sqs_backlog_stall",
+        "dynamodb": "check_dynamodb_stream_lambda_readiness",
+        "s3": "check_s3_notification_destination_readiness",
+        "discovery": "search_aws_resources",
+    }.get(str(first_stop.get("stage") or ""), "get_cross_service_incident_brief")
 
 
 def _selected_services(services: list[str] | None) -> list[str]:

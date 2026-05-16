@@ -148,6 +148,9 @@ from aws_safe_mcp.tools.resource_search import (
     plan_end_to_end_transaction_trace as plan_end_to_end_transaction_trace_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
+    run_first_blocked_edge_incident as run_first_blocked_edge_incident_tool,
+)
+from aws_safe_mcp.tools.resource_search import (
     search_aws_resources as search_aws_resources_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
@@ -1415,6 +1418,23 @@ def _register_search_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
         return export_application_dependency_graph_tool(
             runtime,
             application_prefix=application_prefix,
+            region=region,
+            max_matches=max_matches,
+        )
+
+    @mcp.tool()
+    @audit.tool("run_first_blocked_edge_incident")
+    def run_first_blocked_edge_incident(
+        seed_resource: str,
+        symptom: str,
+        region: str | None = None,
+        max_matches: int | None = None,
+    ) -> dict[str, object]:
+        """Run bounded diagnostics and stop at the first blocked or unknown edge."""
+        return run_first_blocked_edge_incident_tool(
+            runtime,
+            seed_resource=seed_resource,
+            symptom=symptom,
             region=region,
             max_matches=max_matches,
         )

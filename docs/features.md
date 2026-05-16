@@ -330,6 +330,8 @@ Related tools:
 - Export a redacted application dependency graph from discovered resources and
   existing dependency edges, including confidence and unresolved hints without
   raw policies or secret values.
+- Run a bounded first-blocked-edge incident diagnostic from a seed resource and
+  symptom, stopping at the first blocked or unknown edge with a next safe tool.
 - Produce a risk-scored dependency health summary for an application prefix
   using discovered resources and service-specific follow-up risks.
 
@@ -343,6 +345,7 @@ Related tools:
 - `plan_end_to_end_transaction_trace`
 - `get_risk_scored_dependency_health_summary`
 - `export_application_dependency_graph`
+- `run_first_blocked_edge_incident`
 
 ## Local Emulator Workflows
 

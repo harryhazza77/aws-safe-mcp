@@ -1038,3 +1038,17 @@ Inputs:
 - `application_prefix` required
 - `region` optional
 - `max_matches` optional
+
+### `run_first_blocked_edge_incident`
+
+Runs existing safe diagnostics from a seed resource and symptom, then stops at
+the first blocked or unknown high-confidence edge. It returns checked edges,
+blocked or unknown status, and the next safest tool without invoking workloads,
+reading payloads, or returning raw policies or secret values.
+
+Inputs:
+
+- `seed_resource` required
+- `symptom` required
+- `region` optional
+- `max_matches` optional

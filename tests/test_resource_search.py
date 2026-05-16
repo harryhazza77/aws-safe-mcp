@@ -16,6 +16,7 @@ from aws_safe_mcp.tools.resource_search import (
     get_cross_service_incident_brief,
     get_risk_scored_dependency_health_summary,
     plan_end_to_end_transaction_trace,
+    run_first_blocked_edge_incident,
     search_aws_resources,
     search_aws_resources_by_tag,
 )
@@ -334,6 +335,34 @@ def test_plan_end_to_end_transaction_trace_orders_probable_path(
         "stage": "cloudwatch",
         "reason": "matching alarms exist",
     }
+
+
+def test_run_first_blocked_edge_incident_stops_at_alarm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_trace(*_: Any, **__: Any) -> dict[str, Any]:
+        return {
+            "seed_resource": "dev",
+            "trace_plan": [{"service": "lambda", "resource": "dev-handler"}],
+            "source_brief": {
+                "alarm_matches": [
+                    {
+                        "alarm_name": "dev-errors",
+                        "metric_name": "Errors",
+                        "state_value": "ALARM",
+                    }
+                ],
+                "warnings": [],
+            },
+        }
+
+    monkeypatch.setattr(resource_search, "plan_end_to_end_transaction_trace", fake_trace)
+
+    result = run_first_blocked_edge_incident(FakeRuntime(), "dev", "errors")
+
+    assert result["blocked"]["stage"] == "cloudwatch"
+    assert result["unknown"] is None
+    assert result["next_safest_tool"] == "build_log_signal_correlation_timeline"
 
 
 def test_get_risk_scored_dependency_health_summary_scores_resources(
