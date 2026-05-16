@@ -126,9 +126,7 @@ def investigate_step_function_failure(
         "failed_state_definition": definition_context.get("failed_state_definition"),
         "failed_state_path": definition_context.get("failed_state_path"),
         "previous_event_context": (
-            failed_state.get("previous_event_context")
-            if isinstance(failed_state, dict)
-            else None
+            failed_state.get("previous_event_context") if isinstance(failed_state, dict) else None
         ),
         "downstream_target": definition_context.get("downstream_target"),
         "retry_catch": definition_context.get("retry_catch"),

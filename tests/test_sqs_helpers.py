@@ -43,9 +43,7 @@ def test_queue_policy_decision_returns_allowed_for_matching_service_principal() 
             }
         ]
     }
-    assert (
-        _queue_policy_decision(policy, "events.amazonaws.com", "sqs:SendMessage") == "allowed"
-    )
+    assert _queue_policy_decision(policy, "events.amazonaws.com", "sqs:SendMessage") == "allowed"
 
 
 def test_queue_policy_decision_returns_allowed_for_wildcard_principal() -> None:
@@ -166,10 +164,7 @@ def test_lambda_name_from_arn_returns_none_for_non_string() -> None:
 
 def test_lambda_name_from_arn_returns_function_name() -> None:
     assert (
-        _lambda_name_from_arn(
-            "arn:aws:lambda:eu-west-2:123:function:dev-handler"
-        )
-        == "dev-handler"
+        _lambda_name_from_arn("arn:aws:lambda:eu-west-2:123:function:dev-handler") == "dev-handler"
     )
 
 
@@ -193,16 +188,12 @@ def test_optional_bool_handles_variants() -> None:
 
 
 def test_sqs_lambda_delivery_summary_reports_ready_status() -> None:
-    summary = _sqs_lambda_delivery_summary(
-        {"risks": [], "mapping_count": 1, "risk_count": 0}
-    )
+    summary = _sqs_lambda_delivery_summary({"risks": [], "mapping_count": 1, "risk_count": 0})
     assert summary["status"] == "ready"
 
 
 def test_sqs_lambda_delivery_summary_reports_no_mapping() -> None:
-    summary = _sqs_lambda_delivery_summary(
-        {"risks": [], "mapping_count": 0, "risk_count": 0}
-    )
+    summary = _sqs_lambda_delivery_summary({"risks": [], "mapping_count": 0, "risk_count": 0})
     assert summary["status"] == "no_lambda_mapping"
 
 
@@ -232,18 +223,13 @@ def test_first_sqs_backlog_bottleneck_returns_none_for_empty_risks() -> None:
 
 
 def test_first_sqs_backlog_bottleneck_prefers_known_risks() -> None:
-    assert (
-        _first_sqs_backlog_bottleneck(["consumer_throttled", "backlog_present"])
-        is not None
-    )
+    assert _first_sqs_backlog_bottleneck(["consumer_throttled", "backlog_present"]) is not None
 
 
 def test_dlq_replay_summary_has_status_field() -> None:
     summary = _dlq_replay_summary({"risks": [], "cautions": []})
     assert "status" in summary
-    risky = _dlq_replay_summary(
-        {"risks": ["dlq_has_active_lambda_consumer"], "cautions": []}
-    )
+    risky = _dlq_replay_summary({"risks": ["dlq_has_active_lambda_consumer"], "cautions": []})
     assert risky["status"] == "not_ready"
 
 

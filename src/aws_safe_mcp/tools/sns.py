@@ -133,9 +133,7 @@ def explain_sns_topic_dependencies(
     nodes = {
         "topic": topic,
         "subscriptions": subscriptions,
-        "lambda_targets": [
-            item for item in subscriptions if item.get("protocol") == "lambda"
-        ],
+        "lambda_targets": [item for item in subscriptions if item.get("protocol") == "lambda"],
         "sqs_targets": [item for item in subscriptions if item.get("protocol") == "sqs"],
         "dead_letter_targets": [
             item["dead_letter"]

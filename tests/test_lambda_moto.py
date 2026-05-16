@@ -155,18 +155,14 @@ def test_explain_lambda_dependencies_includes_log_group_edge(
     role_arn = _create_role("dev-deps-role")
     _create_lambda("dev-deps", role_arn)
 
-    result = explain_lambda_dependencies(
-        moto_runtime, "dev-deps", include_permission_checks=False
-    )
+    result = explain_lambda_dependencies(moto_runtime, "dev-deps", include_permission_checks=False)
 
     assert result["function_name"] == "dev-deps"
     assert result["region"] == MOTO_REGION
     assert result["nodes"]["log_group"]["name"] == "/aws/lambda/dev-deps"
     # Execution role edge must be present regardless of IAM simulation outcome.
     assert any(edge["relationship"] == "uses_execution_role" for edge in result["edges"])
-    assert any(
-        edge["relationship"] == "writes_logs_to" for edge in result["edges"]
-    )
+    assert any(edge["relationship"] == "writes_logs_to" for edge in result["edges"])
     assert f"arn:aws:iam::{MOTO_ACCOUNT_ID}:role/dev-deps-role" in result["nodes"][
         "execution_role"
     ].get("role_arn", "")

@@ -747,9 +747,7 @@ def _dlq_replay_signals(
         {
             "queue_name": source.get("queue_name"),
             "queue_arn": source.get("queue_arn"),
-            "redrives_to_dlq": (source.get("dead_letter") or {}).get(
-                "dead_letter_target_arn"
-            )
+            "redrives_to_dlq": (source.get("dead_letter") or {}).get("dead_letter_target_arn")
             == dlq_arn,
         }
         for source in source_queues
@@ -947,6 +945,8 @@ def _sqs_permission_checks(
         "checks": checks,
         "summary": _permission_summary(checks),
     }
+
+
 def _queue_policy_decision(policy: dict[str, Any] | None, service: str, action: str) -> str:
     if policy is None:
         return "unknown"

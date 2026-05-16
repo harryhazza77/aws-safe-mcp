@@ -554,9 +554,7 @@ def diagnose_region_partition_mismatches(
     resolved_region = resolve_region(runtime, region or expected_region)
     resolved_partition = expected_partition or "aws"
     refs = [_require_resource_ref(value) for value in resource_refs]
-    findings = [
-        _region_partition_finding(ref, resolved_region, resolved_partition) for ref in refs
-    ]
+    findings = [_region_partition_finding(ref, resolved_region, resolved_partition) for ref in refs]
     endpoint_findings = _endpoint_override_findings(
         runtime,
         expected_region=resolved_region,
@@ -971,9 +969,7 @@ def _regional_resource_fingerprint(resource: dict[str, Any]) -> str:
     # commercial (us-east-1), GovCloud (us-gov-west-1), and China
     # (cn-north-1) region formats; non-standard region-encoded names will
     # not be normalized and will appear as missing peers instead of drift.
-    normalized_name = re.sub(
-        r"\b[a-z]{2}(?:-gov)?-[a-z]+-\d\b", "{region}", name
-    )
+    normalized_name = re.sub(r"\b[a-z]{2}(?:-gov)?-[a-z]+-\d\b", "{region}", name)
     return f"{service}:{normalized_name}"
 
 
@@ -1023,9 +1019,7 @@ def _multi_region_drift_summary(findings: list[dict[str, Any]]) -> dict[str, Any
     return {
         "status": "drift_found" if findings else "aligned",
         "finding_count": len(findings),
-        "missing_peer_count": sum(
-            1 for finding in findings if finding["status"] == "missing_peer"
-        ),
+        "missing_peer_count": sum(1 for finding in findings if finding["status"] == "missing_peer"),
     }
 
 

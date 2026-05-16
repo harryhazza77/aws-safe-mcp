@@ -30,9 +30,7 @@ def _inline_policy() -> str:
     return json.dumps(
         {
             "Version": "2012-10-17",
-            "Statement": [
-                {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": "*"}
-            ],
+            "Statement": [{"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": "*"}],
         }
     )
 
@@ -71,9 +69,9 @@ def test_get_iam_role_summary_returns_attached_and_inline_policies(
 
 def test_get_iam_role_summary_accepts_role_arn(moto_runtime: AwsRuntime) -> None:
     iam = boto3.client("iam", region_name=MOTO_REGION)
-    role = iam.create_role(
-        RoleName="dev-arn-role", AssumeRolePolicyDocument=_trust_policy()
-    )["Role"]
+    role = iam.create_role(RoleName="dev-arn-role", AssumeRolePolicyDocument=_trust_policy())[
+        "Role"
+    ]
 
     result = get_iam_role_summary(moto_runtime, role["Arn"])
 

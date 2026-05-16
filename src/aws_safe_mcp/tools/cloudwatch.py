@@ -155,9 +155,7 @@ def query_cloudwatch_logs_insights(
             limit=limit,
         )
         query_id = str(started.get("queryId") or "")
-        response = (
-            _poll_logs_insights_query(client, query_id) if query_id else {}
-        )
+        response = _poll_logs_insights_query(client, query_id) if query_id else {}
     except (BotoCoreError, ClientError) as exc:
         raise normalize_aws_error(exc, "logs.StartQuery") from exc
 
@@ -335,10 +333,7 @@ def find_cloudwatch_alarm_coverage_gaps(
     )
     alarms = _list_metric_alarms_for_coverage(runtime, resolved_region, limit)
     expected = _expected_alarm_coverages(normalized_type, normalized_name)
-    coverage = [
-        _alarm_coverage_item(requirement, alarms)
-        for requirement in expected
-    ]
+    coverage = [_alarm_coverage_item(requirement, alarms) for requirement in expected]
     missing = [item for item in coverage if not item["covered"]]
     weak = [item for item in coverage if item["covered"] and item["actionless_alarm_names"]]
     return {

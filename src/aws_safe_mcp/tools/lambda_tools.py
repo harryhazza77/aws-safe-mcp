@@ -1207,7 +1207,7 @@ def _require_optional_url(value: str | None) -> str | None:
 
 
 def _lambda_environment_url_targets(config: dict[str, Any]) -> list[dict[str, Any]]:
-    variables = ((config.get("Environment") or {}).get("Variables") or {})
+    variables = (config.get("Environment") or {}).get("Variables") or {}
     if not isinstance(variables, dict):
         return []
     targets: list[dict[str, Any]] = []
@@ -1433,8 +1433,7 @@ def _environment_dependency_reason(
     shape = value_hint["value_shape"]
     if shape in {"arn", "queue_url", "url"}:
         return (
-            f"Environment key {key} contains a redacted {shape} that appears to target "
-            f"{service}."
+            f"Environment key {key} contains a redacted {shape} that appears to target {service}."
         )
     return f"Environment key {key} suggests a {service} dependency."
 

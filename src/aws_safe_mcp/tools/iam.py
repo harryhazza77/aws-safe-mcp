@@ -258,8 +258,7 @@ def _likely_policy_layer(evaluation: dict[str, Any]) -> str:
         if any("permissionsboundary" in source_type for source_type in source_types):
             return "permissions_boundary_explicit_deny"
         if any(
-            "organizations" in source_type or "scp" in source_type
-            for source_type in source_types
+            "organizations" in source_type or "scp" in source_type for source_type in source_types
         ):
             return "service_control_policy_explicit_deny"
         return "identity_or_resource_policy_explicit_deny"

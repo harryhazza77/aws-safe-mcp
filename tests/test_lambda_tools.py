@@ -231,9 +231,7 @@ class FakeLambdaClient:
                     "MaximumBatchingWindowInSeconds": 5,
                     "FunctionResponseTypes": ["ReportBatchItemFailures"],
                     "DestinationConfig": {
-                        "OnFailure": {
-                            "Destination": "arn:aws:sqs:eu-west-2:123456789012:esm-dlq"
-                        }
+                        "OnFailure": {"Destination": "arn:aws:sqs:eu-west-2:123456789012:esm-dlq"}
                     },
                     "ScalingConfig": {"MaximumConcurrency": 3},
                     "FilterCriteria": {"Filters": [{"Pattern": '{"secret":"must-not-leak"}'}]},
@@ -485,9 +483,7 @@ class FakeSqsClient:
                         "Statement": [
                             {
                                 "Effect": "Allow",
-                                "Principal": {
-                                    "AWS": "arn:aws:iam::123456789012:role/dev-lambda"
-                                },
+                                "Principal": {"AWS": "arn:aws:iam::123456789012:role/dev-lambda"},
                                 "Action": "sqs:SendMessage",
                                 "Resource": "arn:aws:sqs:eu-west-2:123456789012:dev-queue",
                             }
@@ -1137,9 +1133,7 @@ def test_investigate_lambda_cold_start_init_reports_config_metrics_and_logs() ->
     result = investigate_lambda_cold_start_init(FakeRuntime(), "dev-api", since_minutes=30)
 
     assert result["diagnostic_summary"]["status"] == "needs_attention"
-    assert "vpc_attachment_can_increase_cold_start" in result["diagnostic_summary"][
-        "likely_causes"
-    ]
+    assert "vpc_attachment_can_increase_cold_start" in result["diagnostic_summary"]["likely_causes"]
     assert "low_memory_configuration" in result["diagnostic_summary"]["likely_causes"]
     assert result["signals"]["init_duration_ms_last_hour"] == 900.0
     assert result["log_signals"]["init_report_count"] == 1

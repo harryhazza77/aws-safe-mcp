@@ -187,8 +187,7 @@ def test_get_sns_topic_summary_summarizes_attributes_and_safe_subscriptions() ->
     assert result["subscriptions"] == [
         {
             "subscription_arn": (
-                "arn:aws:sns:eu-west-2:123456789012:dev-orders:"
-                "11111111-1111-1111-1111-111111111111"
+                "arn:aws:sns:eu-west-2:123456789012:dev-orders:11111111-1111-1111-1111-111111111111"
             ),
             "protocol": "sqs",
             "owner": "123456789012",
@@ -242,8 +241,7 @@ def test_explain_sns_topic_dependencies_maps_targets_dlq_and_permissions() -> No
         },
         {
             "source": (
-                "arn:aws:sns:eu-west-2:123456789012:dev-orders:"
-                "11111111-1111-1111-1111-111111111111"
+                "arn:aws:sns:eu-west-2:123456789012:dev-orders:11111111-1111-1111-1111-111111111111"
             ),
             "target": "arn:aws:sqs:eu-west-2:123456789012:dev-dlq",
             "relationship": "dead_letters_to",

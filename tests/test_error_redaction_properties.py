@@ -50,9 +50,7 @@ def test_normalize_aws_error_strips_aws_access_key_id_prefix(suffix: str) -> Non
     message = f"request denied for principal {access_key} (see logs)"
     rendered = str(normalize_aws_error(_client_error(message)))
 
-    assert access_key not in rendered, (
-        "AWS access key id leaked into normalised error message"
-    )
+    assert access_key not in rendered, "AWS access key id leaked into normalised error message"
 
 
 # ---------------------------------------------------------------------------
@@ -73,8 +71,7 @@ def test_normalize_aws_error_strips_aws_secret_access_key_shape(secret: str) -> 
     rendered = str(normalize_aws_error(_client_error(message)))
 
     assert secret not in rendered, (
-        "40-char secret-access-key-shaped substring leaked into normalised "
-        "error message"
+        "40-char secret-access-key-shaped substring leaked into normalised error message"
     )
 
 
@@ -124,8 +121,7 @@ def test_normalize_aws_error_truncates_long_messages(message: str) -> None:
     # caps the message body at 500 chars with a small constant overhead
     # for the truncation tag.
     assert len(rendered) < len(message), (
-        f"long error message was not truncated (len={len(rendered)} vs "
-        f"input len={len(message)})"
+        f"long error message was not truncated (len={len(rendered)} vs input len={len(message)})"
     )
     assert len(rendered) < 1000, (
         f"rendered error message exceeded bounded envelope (len={len(rendered)})"
@@ -154,10 +150,8 @@ def test_normalize_aws_error_strips_secret_keywords(
     rendered = str(normalize_aws_error(_client_error(message)))
 
     assert value not in rendered, (
-        f"value after {keyword}{separator!r} leaked into normalised error "
-        f"message: {rendered!r}"
+        f"value after {keyword}{separator!r} leaked into normalised error message: {rendered!r}"
     )
     assert "[REDACTED]" in rendered, (
-        "expected [REDACTED] marker after secret keyword in normalised "
-        f"error message: {rendered!r}"
+        f"expected [REDACTED] marker after secret keyword in normalised error message: {rendered!r}"
     )

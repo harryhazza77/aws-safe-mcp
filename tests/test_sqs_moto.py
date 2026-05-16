@@ -104,9 +104,9 @@ def test_get_sqs_queue_summary_returns_attributes(moto_runtime: AwsRuntime) -> N
 def test_get_sqs_queue_summary_handles_fifo_and_dlq(moto_runtime: AwsRuntime) -> None:
     dlq_url = _create_queue("dev-dlq.fifo", attributes={"FifoQueue": "true"})
     sqs = boto3.client("sqs", region_name=MOTO_REGION)
-    dlq_arn = sqs.get_queue_attributes(QueueUrl=dlq_url, AttributeNames=["QueueArn"])[
-        "Attributes"
-    ]["QueueArn"]
+    dlq_arn = sqs.get_queue_attributes(QueueUrl=dlq_url, AttributeNames=["QueueArn"])["Attributes"][
+        "QueueArn"
+    ]
     redrive = {"deadLetterTargetArn": dlq_arn, "maxReceiveCount": "5"}
     primary_url = _create_queue(
         "dev-primary.fifo",
@@ -221,9 +221,9 @@ def test_analyze_queue_dlq_replay_readiness_with_source_queues(
 ) -> None:
     dlq_url = _create_queue("dev-replay-dlq")
     sqs = boto3.client("sqs", region_name=MOTO_REGION)
-    dlq_arn = sqs.get_queue_attributes(QueueUrl=dlq_url, AttributeNames=["QueueArn"])[
-        "Attributes"
-    ]["QueueArn"]
+    dlq_arn = sqs.get_queue_attributes(QueueUrl=dlq_url, AttributeNames=["QueueArn"])["Attributes"][
+        "QueueArn"
+    ]
     redrive = {"deadLetterTargetArn": dlq_arn, "maxReceiveCount": "3"}
     source_url = _create_queue(
         "dev-replay-source",

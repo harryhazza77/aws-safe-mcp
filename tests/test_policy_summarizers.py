@@ -59,9 +59,7 @@ def test_trust_policy_summary_typical_multi_statement() -> None:
             },
             {
                 "Effect": "Allow",
-                "Principal": {
-                    "Federated": "arn:aws:iam::123456789012:oidc-provider/example.com"
-                },
+                "Principal": {"Federated": "arn:aws:iam::123456789012:oidc-provider/example.com"},
                 "Action": "sts:AssumeRoleWithWebIdentity",
             },
         ],
@@ -73,9 +71,7 @@ def test_trust_policy_summary_typical_multi_statement() -> None:
     assert result["statement_count"] == 3
     assert result["service_principals"] == ["lambda.amazonaws.com"]
     assert result["aws_principals"] == ["arn:aws:iam::123456789012:root"]
-    assert result["federated_principals"] == [
-        "arn:aws:iam::123456789012:oidc-provider/example.com"
-    ]
+    assert result["federated_principals"] == ["arn:aws:iam::123456789012:oidc-provider/example.com"]
     assert "sts:AssumeRole" in result["actions"]
     _assert_no_raw_policy_keys(result)
 
@@ -138,9 +134,7 @@ def test_sqs_policy_summary_typical_multi_statement() -> None:
                     "Action": "sqs:SendMessage",
                     "Resource": "arn:aws:sqs:eu-west-2:123456789012:queue",
                     "Condition": {
-                        "ArnEquals": {
-                            "aws:SourceArn": "arn:aws:sns:eu-west-2:123456789012:topic"
-                        }
+                        "ArnEquals": {"aws:SourceArn": "arn:aws:sns:eu-west-2:123456789012:topic"}
                     },
                 },
                 {

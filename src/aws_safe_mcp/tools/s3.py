@@ -332,11 +332,7 @@ def _s3_notification_destinations(
 
 
 def _notification_filter_rules(item: dict[str, Any]) -> list[dict[str, Any]]:
-    rules = (
-        (item.get("Filter") or {})
-        .get("Key", {})
-        .get("FilterRules", [])
-    )
+    rules = (item.get("Filter") or {}).get("Key", {}).get("FilterRules", [])
     return [{"name": rule.get("Name"), "value": rule.get("Value")} for rule in rules]
 
 

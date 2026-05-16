@@ -127,8 +127,7 @@ class FakeStepFunctionsClient:
                             "Resource": "arn:aws:states:::sqs:sendMessage",
                             "Parameters": {
                                 "QueueUrl": (
-                                    "https://sqs.eu-west-2.amazonaws.com/"
-                                    "123456789012/dev-queue"
+                                    "https://sqs.eu-west-2.amazonaws.com/123456789012/dev-queue"
                                 ),
                                 "MessageBody.$": "$.message",
                             },
@@ -158,8 +157,7 @@ class FakeStepFunctionsClient:
                             "Resource": "arn:aws:states:::states:startExecution",
                             "Parameters": {
                                 "StateMachineArn": (
-                                    "arn:aws:states:eu-west-2:123456789012:"
-                                    "stateMachine:child-flow"
+                                    "arn:aws:states:eu-west-2:123456789012:stateMachine:child-flow"
                                 ),
                             },
                             "End": True,

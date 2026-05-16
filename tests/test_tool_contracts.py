@@ -161,9 +161,9 @@ LAMBDA_SUMMARY_SCHEMA: dict = {
 
 def _seed_lambda(name: str) -> None:
     iam = boto3.client("iam", region_name=MOTO_REGION)
-    role = iam.create_role(
-        RoleName=f"{name}-role", AssumeRolePolicyDocument=_trust_policy()
-    )["Role"]
+    role = iam.create_role(RoleName=f"{name}-role", AssumeRolePolicyDocument=_trust_policy())[
+        "Role"
+    ]
     boto3.client("lambda", region_name=MOTO_REGION).create_function(
         FunctionName=name,
         Runtime="python3.11",
@@ -241,9 +241,9 @@ def test_list_sqs_queues_contract(moto_runtime: AwsRuntime) -> None:
 
 
 def test_get_sqs_queue_summary_contract(moto_runtime: AwsRuntime) -> None:
-    url = boto3.client("sqs", region_name=MOTO_REGION).create_queue(
-        QueueName="dev-summary-queue"
-    )["QueueUrl"]
+    url = boto3.client("sqs", region_name=MOTO_REGION).create_queue(QueueName="dev-summary-queue")[
+        "QueueUrl"
+    ]
 
     _validate(SQS_SUMMARY_SCHEMA, get_sqs_queue_summary(moto_runtime, url))
 

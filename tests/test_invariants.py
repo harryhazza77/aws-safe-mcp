@@ -197,8 +197,7 @@ def test_audit_tool_names_are_unique() -> None:
     names = [name for _, name in _tool_pairs(source) if name]
     duplicates = sorted({name for name in names if names.count(name) > 1})
     assert not duplicates, (
-        "Each @audit.tool(...) name must be unique across the registry. "
-        f"Duplicates: {duplicates}"
+        f"Each @audit.tool(...) name must be unique across the registry. Duplicates: {duplicates}"
     )
 
 
@@ -237,9 +236,7 @@ def test_no_mutating_boto3_calls(path: Path) -> None:
 
 def _looks_like_sdk_call(line: str, verb: str) -> bool:
     """Heuristic: the verb is invoked on a name suggestive of a boto3 client."""
-    pattern = re.compile(
-        r"(?:^|[\s(])(?:[a-z_][a-z0-9_]*)\." + re.escape(verb) + r"\("
-    )
+    pattern = re.compile(r"(?:^|[\s(])(?:[a-z_][a-z0-9_]*)\." + re.escape(verb) + r"\(")
     if not pattern.search(line):
         return False
     # Skip self-method calls and internal helpers (snake_case dotted names
@@ -249,9 +246,7 @@ def _looks_like_sdk_call(line: str, verb: str) -> bool:
     # are caught here but those are internal calls, not boto3 calls.
     # Internal helper functions are typically prefixed with `_`, so skip
     # those.
-    receiver_match = re.search(
-        r"(?:^|[\s(])([a-z_][a-z0-9_]*)\." + re.escape(verb) + r"\(", line
-    )
+    receiver_match = re.search(r"(?:^|[\s(])([a-z_][a-z0-9_]*)\." + re.escape(verb) + r"\(", line)
     return not (receiver_match and receiver_match.group(1).startswith("_"))
 
 

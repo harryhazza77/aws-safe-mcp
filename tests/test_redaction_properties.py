@@ -52,9 +52,7 @@ def test_is_secret_like_key_case_insensitive(text: str) -> None:
 
 
 @given(st.sampled_from(SECRET_KEYWORDS), st.text(max_size=50), st.text(max_size=50))
-def test_is_secret_like_key_matches_any_substring(
-    keyword: str, prefix: str, suffix: str
-) -> None:
+def test_is_secret_like_key_matches_any_substring(keyword: str, prefix: str, suffix: str) -> None:
     candidate = f"{prefix}{keyword}{suffix}"
     assert is_secret_like_key(candidate) is True
 
@@ -137,9 +135,7 @@ def test_redact_environment_redacts_secret_keys_even_when_unlocked(
         max_size=50,
     ),
 )
-def test_redact_text_strips_secret_key_values_from_text(
-    keyword: str, payload: str
-) -> None:
+def test_redact_text_strips_secret_key_values_from_text(keyword: str, payload: str) -> None:
     config = _config(max_length=1000)
     original = f"foo MY_{keyword}_NAME={payload} bar"
     redacted = redact_text(original, config)
@@ -161,9 +157,7 @@ def test_redact_text_is_idempotent_on_already_redacted_input(value: str) -> None
 
 
 @given(st.text(min_size=0, max_size=500), st.integers(min_value=10, max_value=200))
-def test_truncate_string_never_exceeds_a_bounded_envelope(
-    value: str, max_length: int
-) -> None:
+def test_truncate_string_never_exceeds_a_bounded_envelope(value: str, max_length: int) -> None:
     # The truncation marker is a fixed suffix; output length is bounded by
     # `max_length` + a constant overhead for the truncation tag.
     result = truncate_string(value, max_length)

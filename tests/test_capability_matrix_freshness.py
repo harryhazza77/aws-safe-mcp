@@ -43,9 +43,7 @@ def _extract_matrix_block(text: str) -> tuple[str, int]:
         if line.startswith("## ") or line.startswith("### "):
             end = idx
             break
-    assert start is not None, (
-        f"Could not locate '{MATRIX_HEADER}' section in {FEATURES_DOC}"
-    )
+    assert start is not None, f"Could not locate '{MATRIX_HEADER}' section in {FEATURES_DOC}"
     if end is None:
         end = len(lines)
     return "\n".join(lines[start:end]), start
@@ -77,13 +75,9 @@ def _collect_registered_tool_names() -> set[str]:
 def test_capability_matrix_entries_exist_as_registered_tools() -> None:
     matrix_entries = _collect_matrix_tool_names()
     registered = _collect_registered_tool_names()
-    assert registered, (
-        f"Expected at least one @audit.tool(...) registration in {SERVER_FILE}"
-    )
+    assert registered, f"Expected at least one @audit.tool(...) registration in {SERVER_FILE}"
 
-    stale = {
-        name: lines for name, lines in matrix_entries.items() if name not in registered
-    }
+    stale = {name: lines for name, lines in matrix_entries.items() if name not in registered}
     if stale:
         details = "\n".join(
             f"  - `{name}` referenced at {FEATURES_DOC.name} lines "

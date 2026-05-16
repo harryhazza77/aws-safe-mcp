@@ -133,10 +133,7 @@ def test_summary_tools_use_get_prefix() -> None:
         and not name.startswith("get_")
         and f"server:{name}" not in NAMING_EXCEPTIONS
     ]
-    assert not bad, (
-        "Tool names ending in '_summary' must start with 'get_'. "
-        f"Violations: {bad}"
-    )
+    assert not bad, f"Tool names ending in '_summary' must start with 'get_'. Violations: {bad}"
 
 
 def test_list_tools_use_plural_noun() -> None:

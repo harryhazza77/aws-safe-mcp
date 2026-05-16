@@ -164,9 +164,7 @@ class FakeEventsClient:
                     "State": "ENABLED",
                     "EventCount": 10,
                     "RetentionDays": 7,
-                    "EventSourceArn": (
-                        "arn:aws:events:eu-west-2:123456789012:event-bus/default"
-                    ),
+                    "EventSourceArn": ("arn:aws:events:eu-west-2:123456789012:event-bus/default"),
                 }
             ]
         }
@@ -177,9 +175,7 @@ class FakeEventsClient:
                 {
                     "ReplayName": "orders-replay",
                     "State": "COMPLETED",
-                    "EventSourceArn": (
-                        "arn:aws:events:eu-west-2:123456789012:archive/orders"
-                    ),
+                    "EventSourceArn": ("arn:aws:events:eu-west-2:123456789012:archive/orders"),
                     "EventStartTime": datetime(2026, 1, 1, tzinfo=UTC),
                     "EventEndTime": datetime(2026, 1, 2, tzinfo=UTC),
                 }
@@ -196,9 +192,7 @@ class FakeSchedulerClient:
                     "GroupName": "default",
                     "State": "ENABLED",
                     "ScheduleExpression": "cron(0 0 * * ? *)",
-                    "Target": {
-                        "Arn": "arn:aws:lambda:eu-west-2:123456789012:function:dev-handler"
-                    },
+                    "Target": {"Arn": "arn:aws:lambda:eu-west-2:123456789012:function:dev-handler"},
                 }
             ]
         }

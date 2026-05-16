@@ -170,9 +170,7 @@ def investigate_api_gateway_route(
         else None
     )
     permission_allowed = (
-        lambda_policy.get("allows_apigateway_invoke")
-        if isinstance(lambda_policy, dict)
-        else None
+        lambda_policy.get("allows_apigateway_invoke") if isinstance(lambda_policy, dict) else None
     )
     callability_signals = _api_lambda_callability_signals(
         route,

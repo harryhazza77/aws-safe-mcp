@@ -144,8 +144,7 @@ def _ecs_task_definition_summary(client: Any, task_definition_arn: str) -> dict[
         "execution_role_arn": task.get("executionRoleArn"),
         "container_count": len(task.get("containerDefinitions", [])),
         "containers": [
-            _ecs_container_summary(container)
-            for container in task.get("containerDefinitions", [])
+            _ecs_container_summary(container) for container in task.get("containerDefinitions", [])
         ],
         "warnings": [],
     }

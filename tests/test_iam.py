@@ -38,9 +38,7 @@ class FakeIamClient:
                 },
                 "PermissionsBoundary": {
                     "PermissionsBoundaryType": "Policy",
-                    "PermissionsBoundaryArn": (
-                        "arn:aws:iam::123456789012:policy/dev-boundary"
-                    ),
+                    "PermissionsBoundaryArn": ("arn:aws:iam::123456789012:policy/dev-boundary"),
                 },
             }
         }
