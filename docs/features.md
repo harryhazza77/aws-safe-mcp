@@ -332,6 +332,8 @@ Related tools:
   raw policies or secret values.
 - Run a bounded first-blocked-edge incident diagnostic from a seed resource and
   symptom, stopping at the first blocked or unknown edge with a next safe tool.
+- Analyze redacted resource-policy source condition summaries for wildcard
+  overreach, missing source constraints, and source ARN/account mismatches.
 - Produce a risk-scored dependency health summary for an application prefix
   using discovered resources and service-specific follow-up risks.
 
@@ -346,6 +348,7 @@ Related tools:
 - `get_risk_scored_dependency_health_summary`
 - `export_application_dependency_graph`
 - `run_first_blocked_edge_incident`
+- `analyze_resource_policy_condition_mismatches`
 
 ## Local Emulator Workflows
 

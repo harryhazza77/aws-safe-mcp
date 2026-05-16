@@ -316,6 +316,42 @@ def run_first_blocked_edge_incident(
     }
 
 
+def analyze_resource_policy_condition_mismatches(
+    source_arn: str,
+    target_arn: str,
+    condition_summaries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    source = source_arn.strip()
+    target = target_arn.strip()
+    if not source:
+        raise ToolInputError("source_arn is required")
+    if not target:
+        raise ToolInputError("target_arn is required")
+    source_identity = _arn_identity(source)
+    target_identity = _arn_identity(target)
+    findings = [
+        _condition_summary_finding(source, source_identity, target_identity, summary)
+        for summary in condition_summaries
+    ]
+    if not findings:
+        findings.append(
+            {
+                "status": "missing_source_constraint",
+                "risk": "unknown_trust_boundary",
+                "reason": "No source condition summaries were provided.",
+                "condition_keys": [],
+            }
+        )
+    return {
+        "source": source_identity,
+        "target": target_identity,
+        "finding_count": len(findings),
+        "summary": _condition_mismatch_summary(findings),
+        "findings": findings,
+        "raw_policy_documents_returned": False,
+    }
+
+
 def diagnose_region_partition_mismatches(
     runtime: AwsRuntime,
     resource_refs: list[str],
@@ -636,6 +672,102 @@ def _next_safest_tool(first_stop: dict[str, Any]) -> str:
         "s3": "check_s3_notification_destination_readiness",
         "discovery": "search_aws_resources",
     }.get(str(first_stop.get("stage") or ""), "get_cross_service_incident_brief")
+
+
+def _arn_identity(arn: str) -> dict[str, str | None]:
+    parts = arn.split(":", 5)
+    parsed = _arn_parts(arn)
+    return {
+        "arn": arn,
+        "service": parsed["service"],
+        "resource_type": parsed["resource_type"],
+        "name": parsed["name"],
+        "region": parts[3] if len(parts) >= 6 else None,
+        "account": parts[4] if len(parts) >= 6 else None,
+    }
+
+
+def _condition_summary_finding(
+    source_arn: str,
+    source: dict[str, str | None],
+    target: dict[str, str | None],
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    values = [str(value) for value in _as_list(summary.get("source_arns"))]
+    accounts = [str(value) for value in _as_list(summary.get("source_accounts"))]
+    keys = [str(value) for value in _as_list(summary.get("condition_keys"))]
+    service_principal = str(summary.get("service_principal") or "")
+    if any(_wildcard_value(value) for value in [*values, *accounts, service_principal]):
+        return {
+            "status": "wildcard_overreach",
+            "risk": "overbroad_resource_policy",
+            "reason": "Condition summary contains wildcard source trust.",
+            "condition_keys": keys,
+            "statement_hint": summary.get("statement_hint"),
+        }
+    if not values and not accounts:
+        return {
+            "status": "missing_source_constraint",
+            "risk": "confused_deputy_possible",
+            "reason": "No SourceArn or SourceAccount constraint was summarized.",
+            "condition_keys": keys,
+            "statement_hint": summary.get("statement_hint"),
+        }
+    if values and not any(_source_condition_matches(value, source_arn) for value in values):
+        return {
+            "status": "source_arn_mismatch",
+            "risk": "delivery_blocked",
+            "reason": "SourceArn condition does not match the expected source.",
+            "condition_keys": keys,
+            "expected_source_service": source.get("service"),
+            "target_service": target.get("service"),
+            "statement_hint": summary.get("statement_hint"),
+        }
+    if accounts and source.get("account") not in accounts:
+        return {
+            "status": "source_account_mismatch",
+            "risk": "delivery_blocked",
+            "reason": "SourceAccount condition does not match the expected source account.",
+            "condition_keys": keys,
+            "expected_source_account": source.get("account"),
+            "target_service": target.get("service"),
+            "statement_hint": summary.get("statement_hint"),
+        }
+    return {
+        "status": "matched",
+        "risk": "none",
+        "reason": "Source condition summary matches expected source identifiers.",
+        "condition_keys": keys,
+        "statement_hint": summary.get("statement_hint"),
+    }
+
+
+def _condition_mismatch_summary(findings: list[dict[str, Any]]) -> dict[str, Any]:
+    risky = [item for item in findings if item["status"] != "matched"]
+    return {
+        "status": "mismatch_or_overreach" if risky else "matched",
+        "risky_count": len(risky),
+        "matched_count": len(findings) - len(risky),
+    }
+
+
+def _source_condition_matches(pattern: str, source_arn: str) -> bool:
+    if pattern == source_arn:
+        return True
+    regex = "^" + re.escape(pattern).replace("\\*", ".*") + "$"
+    return re.match(regex, source_arn) is not None
+
+
+def _wildcard_value(value: str) -> bool:
+    return value in {"*", "arn:*"} or value.endswith(":*") or ":*:" in value
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
 
 
 def _selected_services(services: list[str] | None) -> list[str]:

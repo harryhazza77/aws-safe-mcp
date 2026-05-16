@@ -133,6 +133,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "get_risk_scored_dependency_health_summary",
         "export_application_dependency_graph",
         "run_first_blocked_edge_incident",
+        "analyze_resource_policy_condition_mismatches",
     }
     assert status_result["authenticated"] is True
     assert status_result["principal_type"] == "assumed_role"

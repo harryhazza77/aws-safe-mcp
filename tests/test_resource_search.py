@@ -10,6 +10,7 @@ from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import ToolInputError
 from aws_safe_mcp.tools import resource_search
 from aws_safe_mcp.tools.resource_search import (
+    analyze_resource_policy_condition_mismatches,
     build_log_signal_correlation_timeline,
     diagnose_region_partition_mismatches,
     export_application_dependency_graph,
@@ -363,6 +364,36 @@ def test_run_first_blocked_edge_incident_stops_at_alarm(
     assert result["blocked"]["stage"] == "cloudwatch"
     assert result["unknown"] is None
     assert result["next_safest_tool"] == "build_log_signal_correlation_timeline"
+
+
+def test_analyze_resource_policy_condition_mismatches_flags_bad_sources() -> None:
+    result = analyze_resource_policy_condition_mismatches(
+        source_arn="arn:aws:events:eu-west-2:123456789012:rule/dev-rule",
+        target_arn="arn:aws:lambda:eu-west-2:123456789012:function:dev-handler",
+        condition_summaries=[
+            {
+                "statement_hint": "AllowEvents",
+                "condition_keys": ["AWS:SourceArn"],
+                "source_arns": ["arn:aws:events:eu-west-2:123456789012:rule/other"],
+            },
+            {
+                "statement_hint": "AllowAny",
+                "condition_keys": ["AWS:SourceArn"],
+                "source_arns": ["arn:aws:events:*"],
+            },
+        ],
+    )
+
+    assert result["raw_policy_documents_returned"] is False
+    assert result["summary"] == {
+        "status": "mismatch_or_overreach",
+        "risky_count": 2,
+        "matched_count": 0,
+    }
+    assert [finding["status"] for finding in result["findings"]] == [
+        "source_arn_mismatch",
+        "wildcard_overreach",
+    ]
 
 
 def test_get_risk_scored_dependency_health_summary_scores_resources(

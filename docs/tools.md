@@ -1052,3 +1052,15 @@ Inputs:
 - `symptom` required
 - `region` optional
 - `max_matches` optional
+
+### `analyze_resource_policy_condition_mismatches`
+
+Analyzes redacted resource-policy condition summaries for expected source and
+target ARNs. It flags wildcard overreach, missing source constraints, and source
+ARN/account mismatches without returning raw policy documents.
+
+Inputs:
+
+- `source_arn` required
+- `target_arn` required
+- `condition_summaries` required

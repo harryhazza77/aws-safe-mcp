@@ -130,6 +130,9 @@ from aws_safe_mcp.tools.lambda_tools import (
     simulate_lambda_security_group_path as simulate_lambda_security_group_path_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
+    analyze_resource_policy_condition_mismatches as condition_mismatch_tool,
+)
+from aws_safe_mcp.tools.resource_search import (
     build_log_signal_correlation_timeline as build_log_signal_correlation_timeline_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
@@ -1437,4 +1440,18 @@ def _register_search_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
             symptom=symptom,
             region=region,
             max_matches=max_matches,
+        )
+
+    @mcp.tool()
+    @audit.tool("analyze_resource_policy_condition_mismatches")
+    def analyze_resource_policy_condition_mismatches(
+        source_arn: str,
+        target_arn: str,
+        condition_summaries: list[dict[str, object]],
+    ) -> dict[str, object]:
+        """Analyze redacted resource-policy source condition summaries."""
+        return condition_mismatch_tool(
+            source_arn=source_arn,
+            target_arn=target_arn,
+            condition_summaries=condition_summaries,
         )
