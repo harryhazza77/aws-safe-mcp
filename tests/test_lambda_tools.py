@@ -605,6 +605,9 @@ def test_audit_async_lambda_failure_path_reports_destination_and_concurrency() -
         "arn:aws:sqs:eu-west-2:123456789012:async-dlq"
     )
     assert result["reserved_concurrency"]["reserved_concurrent_executions"] == 5
+    assert result["retry_topology"]["summary"]["risk_count"] == 0
+    assert any(edge["type"] == "async_on_failure" for edge in result["retry_topology"]["edges"])
+    assert any(edge["type"] == "lambda_dlq" for edge in result["retry_topology"]["edges"])
     assert result["signals"]["failure_destination_configured"] is True
     assert result["diagnostic_summary"] == {"status": "covered", "risks": []}
 

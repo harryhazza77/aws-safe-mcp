@@ -314,6 +314,7 @@ def audit_async_lambda_failure_path(
     client = runtime.client("lambda", region=resolved_region)
     async_config, warnings = _lambda_async_invoke_config(client, required_name)
     concurrency = _lambda_reserved_concurrency(client, required_name, warnings)
+    event_sources = _lambda_event_source_summary(runtime, required_name, resolved_region)
     signals = _async_lambda_failure_signals(summary, async_config, concurrency)
     return {
         "function_name": required_name,
@@ -322,6 +323,7 @@ def audit_async_lambda_failure_path(
         "async_invoke_config": async_config,
         "dead_letter": summary.get("dead_letter"),
         "reserved_concurrency": concurrency,
+        "retry_topology": _async_lambda_retry_topology(summary, async_config, event_sources),
         "recent_metrics": summary.get("recent_metrics"),
         "signals": signals,
         "suggested_next_checks": _async_lambda_failure_next_checks(signals),
@@ -2045,6 +2047,72 @@ def _async_lambda_failure_summary(signals: dict[str, Any]) -> dict[str, Any]:
     return {"status": "needs_attention" if risks else "covered", "risks": risks}
 
 
+def _async_lambda_retry_topology(
+    summary: dict[str, Any],
+    async_config: dict[str, Any],
+    event_sources: dict[str, Any],
+) -> dict[str, Any]:
+    function_arn = summary.get("function_arn")
+    dead_letter = summary.get("dead_letter") or {}
+    nodes = [{"id": function_arn, "type": "lambda", "label": summary.get("function_name")}]
+    edges: list[dict[str, Any]] = []
+    risks = []
+    for key, edge_type in [
+        ("on_success_arn", "async_on_success"),
+        ("on_failure_arn", "async_on_failure"),
+    ]:
+        target = async_config.get(key)
+        if target:
+            nodes.append(
+                {"id": target, "type": _arn_service(target), "label": _arn_resource(target)}
+            )
+            edges.append({"from": function_arn, "to": target, "type": edge_type})
+    dlq_target = dead_letter.get("target_arn")
+    if dlq_target:
+        nodes.append(
+            {
+                "id": dlq_target,
+                "type": _arn_service(dlq_target),
+                "label": _arn_resource(dlq_target),
+            }
+        )
+        edges.append({"from": function_arn, "to": dlq_target, "type": "lambda_dlq"})
+    if not async_config.get("on_failure_arn") and not dlq_target:
+        risks.append("async_failures_have_no_destination")
+    for item in event_sources.get("event_sources", []):
+        source = item.get("event_source_arn")
+        if source:
+            nodes.append(
+                {
+                    "id": source,
+                    "type": _arn_service(str(source)),
+                    "label": _arn_resource(str(source)),
+                }
+            )
+            edges.append({"from": source, "to": function_arn, "type": "event_source_mapping"})
+    if any(edge["from"] == edge["to"] for edge in edges):
+        risks.append("retry_topology_loop")
+    return {
+        "nodes": _dedupe_topology_nodes(nodes),
+        "edges": edges,
+        "summary": {
+            "node_count": len(_dedupe_topology_nodes(nodes)),
+            "edge_count": len(edges),
+            "risk_count": len(risks),
+            "risks": risks,
+        },
+    }
+
+
+def _dedupe_topology_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: dict[str, dict[str, Any]] = {}
+    for node in nodes:
+        node_id = str(node.get("id") or "")
+        if node_id:
+            deduped[node_id] = node
+    return list(deduped.values())
+
+
 def _lambda_concurrency_signals(
     summary: dict[str, Any],
     concurrency: dict[str, Any],
@@ -3361,6 +3429,15 @@ def _arn_service(value: Any) -> str | None:
     if len(parts) < 3 or parts[0] != "arn":
         return None
     return parts[2]
+
+
+def _arn_resource(value: Any) -> str | None:
+    if not value:
+        return None
+    parts = str(value).split(":", maxsplit=5)
+    if len(parts) < 6 or parts[0] != "arn":
+        return None
+    return parts[5]
 
 
 def _log_group_arn(summary: dict[str, Any], log_group_name: str) -> str | None:

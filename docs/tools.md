@@ -169,7 +169,7 @@ Inputs:
 Audits where asynchronously invoked Lambda events go when invocation fails. The
 tool summarizes async retry settings, maximum event age, on-failure/on-success
 destinations, Lambda DLQ fallback, reserved concurrency, recent throttle
-metrics, and suggested next checks.
+metrics, retry topology nodes/edges, and suggested next checks.
 
 Inputs:
 

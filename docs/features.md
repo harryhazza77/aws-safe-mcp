@@ -68,7 +68,8 @@ Related tools:
   mappings into a failure investigation.
 - Audit async Lambda failure paths, including retry age/attempt settings,
   on-failure destinations, DLQ fallback, reserved concurrency, and recent
-  throttles.
+  throttles, plus a retry topology graph of Lambda destinations, DLQ, and event
+  source mappings.
 - Investigate Lambda concurrency bottlenecks by correlating reserved
   concurrency, recent throttles/invocations, and event source mapping state.
 - Map Lambda dependencies such as execution role, log group, VPC attachment,
