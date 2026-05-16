@@ -406,6 +406,15 @@ def test_explain_step_function_dependencies_maps_tasks_and_permissions() -> None
     assert "arn:aws:sqs:eu-west-2:123456789012:dev-queue" in checked_resources
     assert "arn:aws:dynamodb:eu-west-2:123456789012:table/dev-table" in checked_resources
     assert result["permission_checks"]["summary"]["allowed"] == 8
+    assert result["task_permission_proof"]["status"] == "ready"
+    assert result["task_permission_proof"]["task_count"] == 6
+    call_worker_proof = next(
+        item
+        for item in result["task_permission_proof"]["tasks"]
+        if item["state_name"] == "CallWorker"
+    )
+    assert call_worker_proof["permission_status"] == "allowed"
+    assert call_worker_proof["checked_actions"] == ["lambda:InvokeFunction"]
     assert result["graph_summary"]["edge_count"] == len(result["edges"])
     assert (
         result["graph_summary"]["permission_check_count"]

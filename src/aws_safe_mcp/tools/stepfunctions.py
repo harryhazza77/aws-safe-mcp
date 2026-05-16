@@ -201,6 +201,10 @@ def explain_step_function_dependencies(
             "start_at": definition.get("StartAt") if isinstance(definition, dict) else None,
         },
         "flow_summary": _step_function_flow_summary(definition, states, edges),
+        "task_permission_proof": _step_function_task_permission_proof(
+            states,
+            permission_checks,
+        ),
         "graph_summary": dependency_graph_summary(
             nodes=nodes,
             edges=edges,
@@ -567,6 +571,56 @@ def _step_function_permission_checks(
         "checks": checks,
         "summary": _permission_summary(checks),
     }
+
+
+def _step_function_task_permission_proof(
+    states: list[dict[str, Any]],
+    permission_checks: dict[str, Any],
+) -> dict[str, Any]:
+    checks = permission_checks.get("checks", [])
+    checks_by_resource: dict[str, list[dict[str, Any]]] = {}
+    for check in checks:
+        checks_by_resource.setdefault(str(check.get("resource_arn")), []).append(check)
+    task_proofs = []
+    for state in states:
+        if state.get("type") != "Task":
+            continue
+        target = str(state.get("target_arn") or "")
+        state_checks = checks_by_resource.get(target, [])
+        task_proofs.append(
+            {
+                "state_name": state.get("name"),
+                "integration": state.get("integration"),
+                "target_arn": target or None,
+                "retry_count": len(state.get("retry") or []),
+                "catch_count": len(state.get("catch") or []),
+                "permission_status": _task_permission_status(state_checks),
+                "checked_actions": sorted(
+                    str(check.get("action")) for check in state_checks if check.get("action")
+                ),
+            }
+        )
+    blockers = [
+        proof["state_name"]
+        for proof in task_proofs
+        if proof["permission_status"] in {"denied", "unknown"}
+    ]
+    return {
+        "status": "blocked" if blockers else "ready",
+        "task_count": len(task_proofs),
+        "blocked_state_names": blockers,
+        "tasks": task_proofs,
+    }
+
+
+def _task_permission_status(checks: list[dict[str, Any]]) -> str:
+    if not checks:
+        return "not_checked"
+    if any(check.get("allowed") is False for check in checks):
+        return "denied"
+    if any(check.get("allowed") is None for check in checks):
+        return "unknown"
+    return "allowed"
 
 
 def _permission_candidates(permission_hints: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -260,8 +260,9 @@ Inputs:
 Maps one state machine into a compact dependency graph. It parses ASL, extracts
 Task state targets such as Lambda, SNS, SQS, DynamoDB, ECS, Batch, and nested
 Step Functions, summarizes the execution role, returns a lightweight flow
-summary, and runs inferred IAM simulation checks where possible. The full state
-machine definition is not returned.
+summary, and runs inferred IAM simulation checks where possible. It also returns
+task-level permission proof with per-state target, retry/catch counts, checked
+actions, and blocked states. The full state machine definition is not returned.
 
 Inputs:
 

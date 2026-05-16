@@ -111,6 +111,8 @@ Related tools:
 - Extract task targets for common integrations such as Lambda, SNS, SQS,
   EventBridge PutEvents, DynamoDB, ECS, Batch, and nested Step Functions.
 - Summarize execution role metadata and inferred permission checks.
+- Report task-level permission proof with per-state integration, target,
+  retry/catch counts, checked actions, and blocked states.
 
 Related tools:
 
