@@ -235,6 +235,21 @@ Inputs:
 - `queue_url` required
 - `region` optional
 
+### `prove_lambda_invocation_path`
+
+Checks a suspected Lambda invocation path end to end. The proof covers function
+existence, source ARN region/account alignment, event-source mapping evidence,
+Lambda resource policy matching, source condition keys, and caller IAM policy
+simulation when the caller is an IAM principal. It does not invoke the function
+or return full policy documents.
+
+Inputs:
+
+- `function_name` required
+- `caller_principal` required, as a service principal or AWS ARN
+- `source_arn` optional
+- `region` optional
+
 ## Step Functions
 
 ### `list_step_functions`

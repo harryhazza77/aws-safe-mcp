@@ -522,6 +522,66 @@ def check_lambda_permission_path(
     )
 
 
+def prove_lambda_invocation_path(
+    runtime: AwsRuntime,
+    function_name: str,
+    caller_principal: str,
+    source_arn: str | None = None,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_name = require_lambda_name(function_name)
+    required_principal = _require_caller_principal(caller_principal)
+    required_source_arn = _require_arn(source_arn, "source_arn") if source_arn else None
+    summary = get_lambda_summary(runtime, required_name, region=resolved_region)
+    function_arn = str(summary.get("function_arn") or "")
+    warnings: list[str] = _lambda_summary_warnings(summary)
+    lambda_client = runtime.client("lambda", region=resolved_region)
+    resource_policy = _lambda_invocation_resource_policy_check(
+        lambda_client=lambda_client,
+        function_name=required_name,
+        function_arn=function_arn,
+        caller_principal=required_principal,
+        source_arn=required_source_arn,
+        warnings=warnings,
+    )
+    caller_identity = _lambda_invocation_caller_identity_check(
+        runtime=runtime,
+        caller_principal=required_principal,
+        function_arn=function_arn,
+        warnings=warnings,
+    )
+    trigger_mapping = _lambda_invocation_trigger_mapping_check(
+        runtime=runtime,
+        function_name=required_name,
+        source_arn=required_source_arn,
+        region=resolved_region,
+    )
+    region_account = _lambda_invocation_region_account_check(
+        function_arn=function_arn,
+        source_arn=required_source_arn,
+        caller_principal=required_principal,
+        region=resolved_region,
+    )
+    edges = [
+        {"name": "lambda_exists", "status": "pass" if function_arn else "unknown"},
+        {"name": "region_account", **region_account},
+        {"name": "trigger_mapping", **trigger_mapping},
+        {"name": "lambda_resource_policy", **resource_policy},
+        {"name": "caller_identity_policy", **caller_identity},
+    ]
+    return {
+        "function_name": required_name,
+        "function_arn": function_arn or None,
+        "region": resolved_region,
+        "caller_principal": required_principal,
+        "source_arn": required_source_arn,
+        "edges": edges,
+        "proof_summary": _lambda_invocation_proof_summary(edges),
+        "warnings": warnings,
+    }
+
+
 def check_lambda_to_sqs_sendability(
     runtime: AwsRuntime,
     function_name: str,
@@ -2114,6 +2174,249 @@ def _resource_policy_decision(
         if statement.get("Effect") == "Allow":
             decision = "allowed"
     return decision
+
+
+def _require_caller_principal(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ToolInputError("caller_principal is required")
+    if normalized.endswith(".amazonaws.com") or normalized.startswith("arn:"):
+        return normalized
+    raise ToolInputError("caller_principal must be a service principal or AWS ARN")
+
+
+def _lambda_invocation_resource_policy_check(
+    *,
+    lambda_client: Any,
+    function_name: str,
+    function_arn: str,
+    caller_principal: str,
+    source_arn: str | None,
+    warnings: list[str],
+) -> dict[str, Any]:
+    try:
+        response = lambda_client.get_policy(FunctionName=function_name)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code in {"ResourceNotFoundException", "PolicyNotFoundException"}:
+            return {"status": "blocked", "reason": "lambda_resource_policy_missing"}
+        warnings.append(str(normalize_aws_error(exc, "lambda.GetPolicy")))
+        return {"status": "unknown", "reason": "lambda_resource_policy_unreadable"}
+    except BotoCoreError as exc:
+        warnings.append(str(normalize_aws_error(exc, "lambda.GetPolicy")))
+        return {"status": "unknown", "reason": "lambda_resource_policy_unreadable"}
+    policy = _parse_policy_document(response.get("Policy"))
+    matched = _lambda_invocation_matching_statements(
+        policy=policy,
+        function_arn=function_arn,
+        caller_principal=caller_principal,
+        source_arn=source_arn,
+    )
+    if matched["explicit_deny"]:
+        return {"status": "blocked", "reason": "lambda_resource_policy_explicit_deny", **matched}
+    if matched["allow_count"]:
+        return {"status": "pass", "reason": "lambda_resource_policy_allows_invoke", **matched}
+    return {"status": "blocked", "reason": "lambda_resource_policy_no_matching_allow", **matched}
+
+
+def _lambda_invocation_matching_statements(
+    *,
+    policy: dict[str, Any],
+    function_arn: str,
+    caller_principal: str,
+    source_arn: str | None,
+) -> dict[str, Any]:
+    statements = policy.get("Statement", [])
+    if isinstance(statements, dict):
+        statements = [statements]
+    allow_count = 0
+    explicit_deny = False
+    condition_keys: set[str] = set()
+    for statement in statements if isinstance(statements, list) else []:
+        if not isinstance(statement, dict):
+            continue
+        if not _lambda_invocation_principal_matches(statement.get("Principal"), caller_principal):
+            continue
+        if not _policy_action_matches_generic(statement.get("Action"), "lambda:InvokeFunction"):
+            continue
+        if not _policy_resource_matches(statement.get("Resource"), function_arn):
+            continue
+        condition_value = statement.get("Condition")
+        condition = condition_value if isinstance(condition_value, dict) else {}
+        condition_keys.update(str(key) for key in condition)
+        if source_arn and not _lambda_invocation_source_condition_matches(condition, source_arn):
+            continue
+        if statement.get("Effect") == "Deny":
+            explicit_deny = True
+        if statement.get("Effect") == "Allow":
+            allow_count += 1
+    return {
+        "allow_count": allow_count,
+        "explicit_deny": explicit_deny,
+        "condition_keys": sorted(condition_keys),
+    }
+
+
+def _lambda_invocation_principal_matches(principal: Any, caller_principal: str) -> bool:
+    if caller_principal.endswith(".amazonaws.com"):
+        return _policy_service_principal_matches(principal, caller_principal)
+    return _policy_principal_matches(principal, caller_principal)
+
+
+def _policy_service_principal_matches(principal: Any, service_principal: str) -> bool:
+    if principal == "*":
+        return True
+    if not isinstance(principal, dict):
+        return False
+    service = principal.get("Service")
+    if isinstance(service, str):
+        return service in {service_principal, "*"}
+    if isinstance(service, list):
+        return service_principal in service or "*" in service
+    return False
+
+
+def _policy_action_matches_generic(actions: Any, action: str) -> bool:
+    service = action.split(":", 1)[0]
+    wildcard = f"{service}:*"
+    if isinstance(actions, str):
+        return actions in {action, wildcard, "*"}
+    if isinstance(actions, list):
+        return action in actions or wildcard in actions or "*" in actions
+    return False
+
+
+def _lambda_invocation_source_condition_matches(
+    condition: dict[str, Any],
+    source_arn: str,
+) -> bool:
+    if not condition:
+        return True
+    for operator_values in condition.values():
+        if not isinstance(operator_values, dict):
+            continue
+        for key, value in operator_values.items():
+            if str(key).lower() == "aws:sourcearn":
+                return source_arn in _string_values(value) or "*" in _string_values(value)
+    return True
+
+
+def _lambda_invocation_caller_identity_check(
+    *,
+    runtime: AwsRuntime,
+    caller_principal: str,
+    function_arn: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    if not caller_principal.startswith("arn:aws:iam::"):
+        return {
+            "status": "not_applicable",
+            "reason": "service_principal_uses_resource_policy",
+        }
+    iam = runtime.client("iam", region=runtime.region)
+    try:
+        response = iam.simulate_principal_policy(
+            PolicySourceArn=caller_principal,
+            ActionNames=["lambda:InvokeFunction"],
+            ResourceArns=[function_arn],
+        )
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "iam.SimulatePrincipalPolicy")))
+        return {"status": "unknown", "reason": "caller_identity_policy_unreadable"}
+    evaluation = _simulation_evaluation(response)
+    return {
+        "status": "pass" if evaluation["allowed"] else "blocked",
+        "reason": "caller_identity_policy_allows_invoke"
+        if evaluation["allowed"]
+        else "caller_identity_policy_denies_invoke",
+        "decision": evaluation["decision"],
+        "explicit_deny": evaluation["explicit_deny"],
+        "missing_context_values": evaluation["missing_context_values"],
+    }
+
+
+def _lambda_invocation_trigger_mapping_check(
+    *,
+    runtime: AwsRuntime,
+    function_name: str,
+    source_arn: str | None,
+    region: str,
+) -> dict[str, Any]:
+    if not source_arn:
+        return {"status": "unknown", "reason": "source_arn_not_provided"}
+    event_sources = _lambda_event_source_summary(runtime, function_name, region)
+    if not event_sources.get("available"):
+        return {"status": "unknown", "reason": "event_source_mappings_unreadable"}
+    matched = [
+        item
+        for item in event_sources.get("event_sources", [])
+        if item.get("event_source_arn") == source_arn
+    ]
+    if not matched:
+        return {"status": "not_applicable", "reason": "no_event_source_mapping_for_source"}
+    active = any(str(item.get("state")).lower() == "enabled" for item in matched)
+    return {
+        "status": "pass" if active else "blocked",
+        "reason": "event_source_mapping_enabled" if active else "event_source_mapping_not_enabled",
+        "matched_mapping_count": len(matched),
+    }
+
+
+def _lambda_invocation_region_account_check(
+    *,
+    function_arn: str,
+    source_arn: str | None,
+    caller_principal: str,
+    region: str,
+) -> dict[str, Any]:
+    source_region = _arn_region(source_arn) if source_arn else None
+    caller_account = _arn_account(caller_principal) if caller_principal.startswith("arn:") else None
+    function_account = _arn_account(function_arn)
+    source_account = _arn_account(source_arn) if source_arn else None
+    blockers = []
+    if source_region and source_region != region:
+        blockers.append("source_region_mismatch")
+    if caller_account and function_account and caller_account != function_account:
+        blockers.append("caller_account_differs")
+    if source_account and function_account and source_account != function_account:
+        blockers.append("source_account_differs")
+    return {
+        "status": "blocked" if blockers else "pass",
+        "reason": "region_or_account_mismatch" if blockers else "region_account_aligned",
+        "blockers": blockers,
+        "function_account": function_account,
+        "caller_account": caller_account,
+        "source_account": source_account,
+        "source_region": source_region,
+    }
+
+
+def _lambda_invocation_proof_summary(edges: list[dict[str, Any]]) -> dict[str, Any]:
+    blocking = [edge for edge in edges if edge.get("status") == "blocked"]
+    unknown = [edge for edge in edges if edge.get("status") == "unknown"]
+    if blocking:
+        status = "blocked"
+        first_blocker = blocking[0].get("name")
+    elif unknown:
+        status = "unknown"
+        first_blocker = None
+    else:
+        status = "likely_invokable"
+        first_blocker = None
+    return {
+        "status": status,
+        "first_blocked_edge": first_blocker,
+        "blocked_edges": [edge.get("name") for edge in blocking],
+        "unknown_edges": [edge.get("name") for edge in unknown],
+    }
+
+
+def _string_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return []
 
 
 def _policy_statement_count(raw_policy: Any) -> int:

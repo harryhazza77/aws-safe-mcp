@@ -87,6 +87,9 @@ Related tools:
 - Check whether one Lambda appears able to send messages to one SQS queue,
   including execution-role IAM, queue policy, region/account, FIFO, and KMS
   hints.
+- Prove a suspected Lambda invocation path by checking trigger evidence,
+  Lambda resource policy, optional caller IAM policy, source conditions, and
+  region/account alignment.
 
 Related tools:
 
@@ -101,6 +104,7 @@ Related tools:
 - `explain_lambda_network_access`
 - `check_lambda_permission_path`
 - `check_lambda_to_sqs_sendability`
+- `prove_lambda_invocation_path`
 
 ## Step Functions Investigation
 

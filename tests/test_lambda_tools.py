@@ -21,6 +21,7 @@ from aws_safe_mcp.tools.lambda_tools import (
     get_lambda_summary,
     investigate_lambda_failure,
     list_lambda_functions,
+    prove_lambda_invocation_path,
 )
 
 
@@ -176,8 +177,20 @@ class FakeLambdaClient:
                 {
                     "Statement": [
                         {
+                            "Effect": "Allow",
                             "Principal": {"Service": "apigateway.amazonaws.com"},
                             "Action": "lambda:InvokeFunction",
+                            "Resource": (
+                                "arn:aws:lambda:eu-west-2:123456789012:function:dev-api"
+                            ),
+                            "Condition": {
+                                "ArnLike": {
+                                    "AWS:SourceArn": (
+                                        "arn:aws:execute-api:eu-west-2:123456789012:"
+                                        "api-id/*/GET/dev"
+                                    )
+                                }
+                            },
                         }
                     ]
                 }
@@ -1040,6 +1053,46 @@ def test_check_lambda_to_sqs_sendability_reports_identity_denial() -> None:
 def test_check_lambda_to_sqs_sendability_validates_queue_url() -> None:
     with pytest.raises(ToolInputError, match="queue_url must start"):
         check_lambda_to_sqs_sendability(FakeRuntime(), "dev-api", "dev-queue")
+
+
+def test_prove_lambda_invocation_path_reports_likely_invokable_service_path() -> None:
+    result = prove_lambda_invocation_path(
+        FakeRuntime(),
+        "dev-api",
+        "apigateway.amazonaws.com",
+        source_arn="arn:aws:execute-api:eu-west-2:123456789012:api-id/*/GET/dev",
+    )
+
+    assert result["proof_summary"] == {
+        "status": "likely_invokable",
+        "first_blocked_edge": None,
+        "blocked_edges": [],
+        "unknown_edges": [],
+    }
+    resource_edge = next(
+        edge for edge in result["edges"] if edge["name"] == "lambda_resource_policy"
+    )
+    assert resource_edge["reason"] == "lambda_resource_policy_allows_invoke"
+    assert resource_edge["condition_keys"] == ["ArnLike"]
+    assert "Statement" not in str(result)
+
+
+def test_prove_lambda_invocation_path_reports_first_blocked_edge() -> None:
+    result = prove_lambda_invocation_path(
+        FakeRuntime(),
+        "dev-api",
+        "apigateway.amazonaws.com",
+        source_arn="arn:aws:execute-api:us-east-1:123456789012:api-id/*/GET/dev",
+    )
+
+    assert result["proof_summary"]["status"] == "blocked"
+    assert result["proof_summary"]["first_blocked_edge"] == "region_account"
+    assert "region_account" in result["proof_summary"]["blocked_edges"]
+
+
+def test_prove_lambda_invocation_path_validates_caller_principal() -> None:
+    with pytest.raises(ToolInputError, match="caller_principal"):
+        prove_lambda_invocation_path(FakeRuntime(), "dev-api", "api-gateway")
 
 
 class QuietCloudWatchClient:

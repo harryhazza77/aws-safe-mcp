@@ -90,6 +90,9 @@ from aws_safe_mcp.tools.lambda_tools import (
 from aws_safe_mcp.tools.lambda_tools import (
     list_lambda_functions as list_lambda_functions_tool,
 )
+from aws_safe_mcp.tools.lambda_tools import (
+    prove_lambda_invocation_path as prove_lambda_invocation_path_tool,
+)
 from aws_safe_mcp.tools.resource_search import (
     diagnose_region_partition_mismatches as diagnose_region_partition_mismatches_tool,
 )
@@ -393,6 +396,23 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
             runtime,
             function_name=function_name,
             queue_url=queue_url,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("prove_lambda_invocation_path")
+    def prove_lambda_invocation_path(
+        function_name: str,
+        caller_principal: str,
+        source_arn: str | None = None,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Prove the resource-policy and caller-policy edges for Lambda invocation."""
+        return prove_lambda_invocation_path_tool(
+            runtime,
+            function_name=function_name,
+            caller_principal=caller_principal,
+            source_arn=source_arn,
             region=region,
         )
 
