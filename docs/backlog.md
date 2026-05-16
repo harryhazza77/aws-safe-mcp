@@ -23,18 +23,7 @@ Avoid features that:
 
 ## Feature Candidates
 
-### 1. Lambda Event Source Mapping Diagnostics
-
-Add a focused tool for Lambda event source mappings that summarizes source
-type, state, batch/window settings, last processing result, failure destination,
-and likely permission checks.
-
-- Value: common source of SQS/DynamoDB/Kinesis Lambda delivery problems.
-- Fixture: Lambda with SQS event source mapping.
-- Emulator: Floci or MiniStack.
-- Acceptance: no queue messages or stream records are read.
-
-### 2. Lambda Alias And Version Summary
+### 1. Lambda Alias And Version Summary
 
 Add a Lambda alias/version summary that reports aliases, weighted routing,
 published versions, provisioned concurrency presence, and policy hints.
@@ -44,7 +33,7 @@ published versions, provisioned concurrency presence, and policy hints.
 - Emulator: MiniStack likely.
 - Acceptance: no code package contents are fetched.
 
-### 3. CloudWatch Alarm Inventory And Diagnostics
+### 2. CloudWatch Alarm Inventory And Diagnostics
 
 Add `list_cloudwatch_alarms` and an alarm summary/diagnostic tool for metric
 alarms tied to Lambda, API Gateway, Step Functions, SQS, or EventBridge.
@@ -54,7 +43,7 @@ alarms tied to Lambda, API Gateway, Step Functions, SQS, or EventBridge.
 - Emulator: MiniStack or Floci, depending on CloudWatch alarm support.
 - Acceptance: output links alarms to likely resource names/ARNs.
 
-### 4. CloudWatch Logs Insights Query Helper
+### 3. CloudWatch Logs Insights Query Helper
 
 Add a bounded Logs Insights helper that starts from a known log group and a
 safe query template, with strict time/result limits and redaction.
@@ -64,7 +53,7 @@ safe query template, with strict time/result limits and redaction.
 - Emulator: MiniStack or Floci if Logs Insights is supported.
 - Acceptance: query text and results are bounded; no broad account-wide query.
 
-### 5. Resource Tag Search And Grouping
+### 4. Resource Tag Search And Grouping
 
 Add a tag-based safe resource search that uses the Resource Groups Tagging API
 where available and falls back to service-specific summaries.
@@ -74,7 +63,7 @@ where available and falls back to service-specific summaries.
 - Emulator: Floci or MiniStack.
 - Acceptance: output is bounded and grouped by service/resource type.
 
-### 6. IAM Role Summary Tool
+### 5. IAM Role Summary Tool
 
 Add a read-only IAM role summary for execution roles, including trust policy
 shape, attached/inline policy counts, service principals, and permission
@@ -89,7 +78,7 @@ boundary presence without returning full policy JSON.
 - Emulator: Floci and MiniStack.
 - Acceptance: full policy documents are not returned.
 
-### 7. KMS Key Metadata Summary
+### 6. KMS Key Metadata Summary
 
 Add KMS key inventory/summary for key state, usage, rotation, aliases, and
 policy availability without decrypting or generating data keys.
@@ -102,7 +91,7 @@ policy availability without decrypting or generating data keys.
 - Emulator: MiniStack or Floci depending on KMS support.
 - Acceptance: no cryptographic material or decrypt operations are used.
 
-### 8. ECS Task And Service Summary
+### 7. ECS Task And Service Summary
 
 Add bounded ECS cluster/service/task definition summaries, focusing on desired
 count, deployment state, task role, execution role, containers, log groups, and
@@ -113,7 +102,7 @@ load balancer wiring.
 - Emulator: MiniStack likely.
 - Acceptance: no container env values or secrets are returned.
 
-### 9. Cross-Service Incident Brief
+### 8. Cross-Service Incident Brief
 
 Add an incident-brief tool that accepts a resource name fragment and produces a
 compact investigation bundle from existing safe tools: matching resources,
@@ -163,6 +152,4 @@ existing tools into higher-value diagnostics.
 3. API Gateway route diagnostics.
 4. SNS topic inventory and summary.
 5. SNS topic dependency explanation.
-6. Lambda event source mapping diagnostics.
-7. EventBridge delivery diagnostics upgrade.
-8. Cross-service incident brief.
+6. Cross-service incident brief.

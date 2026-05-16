@@ -98,6 +98,70 @@ def get_lambda_summary(
     return summary
 
 
+def get_lambda_event_source_mapping_diagnostics(
+    runtime: AwsRuntime,
+    function_name: str,
+    region: str | None = None,
+    max_results: int | None = None,
+    include_permission_checks: bool = True,
+    max_permission_checks: int | None = None,
+) -> dict[str, Any]:
+    """Summarize Lambda event source mappings without reading source payloads."""
+
+    resolved_region = resolve_region(runtime, region)
+    required_name = require_lambda_name(function_name)
+    limit = clamp_limit(
+        max_results,
+        default=50,
+        configured_max=runtime.config.max_results,
+        label="max_results",
+    )
+    client = runtime.client("lambda", region=resolved_region)
+    try:
+        response = client.list_event_source_mappings(
+            FunctionName=required_name,
+            MaxItems=min(limit, 100),
+        )
+    except (BotoCoreError, ClientError) as exc:
+        raise normalize_aws_error(exc, "lambda.ListEventSourceMappings") from exc
+
+    mappings = [
+        _event_source_mapping_diagnostic(item)
+        for item in response.get("EventSourceMappings", [])[:limit]
+    ]
+    permission_hints = _event_source_mapping_permission_hints(mappings)
+    role_arn, warnings = _lambda_execution_role_arn(
+        runtime=runtime,
+        function_name=required_name,
+        region=resolved_region,
+    )
+    check_limit = clamp_limit(
+        max_permission_checks,
+        default=20,
+        configured_max=runtime.config.max_results,
+        label="max_permission_checks",
+    )
+
+    return {
+        "function_name": required_name,
+        "region": resolved_region,
+        "summary": _event_source_mapping_summary(mappings, warnings),
+        "mappings": mappings,
+        "permission_hints": permission_hints,
+        "permission_checks": _event_source_mapping_permission_checks(
+            runtime=runtime,
+            function_name=required_name,
+            region=resolved_region,
+            role_arn=role_arn,
+            permission_hints=permission_hints,
+            include_permission_checks=include_permission_checks,
+            limit=check_limit,
+            warnings=warnings,
+        ),
+        "warnings": warnings,
+    }
+
+
 def get_lambda_recent_errors(
     runtime: AwsRuntime,
     function_name: str,
@@ -977,6 +1041,181 @@ def _lambda_event_source_summary(
         for item in response.get("EventSourceMappings", [])
     ]
     return {"available": True, "count": len(mappings), "event_sources": mappings, "warnings": []}
+
+
+def _event_source_mapping_diagnostic(item: dict[str, Any]) -> dict[str, Any]:
+    source_arn = item.get("EventSourceArn")
+    return {
+        "uuid": item.get("UUID"),
+        "state": item.get("State"),
+        "enabled": item.get("State") == "Enabled",
+        "state_transition_reason": item.get("StateTransitionReason"),
+        "last_processing_result": item.get("LastProcessingResult"),
+        "event_source_arn": source_arn,
+        "source_type": _arn_service(source_arn),
+        "function_arn": item.get("FunctionArn"),
+        "batch_size": item.get("BatchSize"),
+        "maximum_batching_window_seconds": item.get("MaximumBatchingWindowInSeconds"),
+        "parallelization_factor": item.get("ParallelizationFactor"),
+        "maximum_retry_attempts": item.get("MaximumRetryAttempts"),
+        "maximum_record_age_seconds": item.get("MaximumRecordAgeInSeconds"),
+        "bisect_batch_on_function_error": item.get("BisectBatchOnFunctionError"),
+        "destination_config": _event_source_destination_config(item.get("DestinationConfig")),
+        "function_response_types": item.get("FunctionResponseTypes", []),
+        "scaling_config": _event_source_scaling_config(item.get("ScalingConfig")),
+        "starting_position": item.get("StartingPosition"),
+        "tumbling_window_seconds": item.get("TumblingWindowInSeconds"),
+        "filter_criteria_configured": bool(item.get("FilterCriteria")),
+    }
+
+
+def _event_source_mapping_summary(
+    mappings: list[dict[str, Any]],
+    warnings: list[str],
+) -> dict[str, Any]:
+    enabled_count = sum(1 for mapping in mappings if mapping.get("state") == "Enabled")
+    disabled_count = sum(1 for mapping in mappings if mapping.get("state") == "Disabled")
+    source_types = sorted(
+        {str(mapping["source_type"]) for mapping in mappings if mapping.get("source_type")}
+    )
+    return {
+        "mapping_count": len(mappings),
+        "enabled_count": enabled_count,
+        "disabled_count": disabled_count,
+        "source_types": source_types,
+        "warning_count": len(warnings),
+    }
+
+
+def _event_source_destination_config(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"on_failure_arn": None, "on_success_arn": None}
+    return {
+        "on_failure_arn": (value.get("OnFailure") or {}).get("Destination"),
+        "on_success_arn": (value.get("OnSuccess") or {}).get("Destination"),
+    }
+
+
+def _event_source_scaling_config(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"maximum_concurrency": None}
+    return {"maximum_concurrency": value.get("MaximumConcurrency")}
+
+
+def _event_source_mapping_permission_hints(
+    mappings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    hints = []
+    for mapping in mappings:
+        source_type = mapping.get("source_type")
+        source_arn = mapping.get("event_source_arn")
+        actions = {
+            "sqs": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
+            "dynamodb": [
+                "dynamodb:DescribeStream",
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+            ],
+            "kinesis": ["kinesis:DescribeStream", "kinesis:GetRecords", "kinesis:GetShardIterator"],
+        }.get(str(source_type), [])
+        if actions:
+            hints.append(
+                {
+                    "mapping_uuid": mapping.get("uuid"),
+                    "source_type": source_type,
+                    "resource": source_arn,
+                    "actions_to_check": actions,
+                    "reason": (
+                        "Lambda event source mappings poll the source using the execution role."
+                    ),
+                }
+            )
+    return hints
+
+
+def _lambda_execution_role_arn(
+    *,
+    runtime: AwsRuntime,
+    function_name: str,
+    region: str,
+) -> tuple[str, list[str]]:
+    client = runtime.client("lambda", region=region)
+    try:
+        response = client.get_function_configuration(FunctionName=function_name)
+    except (BotoCoreError, ClientError) as exc:
+        return "", [str(normalize_aws_error(exc, "lambda.GetFunctionConfiguration"))]
+    return str(response.get("Role") or ""), []
+
+
+def _event_source_mapping_permission_checks(
+    *,
+    runtime: AwsRuntime,
+    function_name: str,
+    region: str,
+    role_arn: str,
+    permission_hints: list[dict[str, Any]],
+    include_permission_checks: bool,
+    limit: int,
+    warnings: list[str],
+) -> dict[str, Any]:
+    if not include_permission_checks:
+        return empty_permission_checks()
+
+    candidates = _dedupe_permission_candidates(
+        [
+            {
+                "action": action,
+                "resource": str(hint["resource"]),
+                "source": "event_source_mapping",
+                "reason": hint.get("reason"),
+                "mapping_uuid": hint.get("mapping_uuid"),
+            }
+            for hint in permission_hints
+            if _simulatable_resource(hint.get("resource"))
+            for action in hint.get("actions_to_check", [])
+        ]
+    )[:limit]
+    checks = [
+        _event_source_mapping_permission_check(
+            runtime=runtime,
+            function_name=function_name,
+            region=region,
+            role_arn=role_arn,
+            candidate=candidate,
+            warnings=warnings,
+        )
+        for candidate in candidates
+    ]
+    return {
+        "enabled": True,
+        "checked_count": len(checks),
+        "checks": checks,
+        "summary": _lambda_permission_investigation_summary(checks),
+    }
+
+
+def _event_source_mapping_permission_check(
+    *,
+    runtime: AwsRuntime,
+    function_name: str,
+    region: str,
+    role_arn: str,
+    candidate: dict[str, Any],
+    warnings: list[str],
+) -> dict[str, Any]:
+    result = _simulate_lambda_role_permission(
+        runtime=runtime,
+        function_name=function_name,
+        region=region,
+        role_arn=role_arn,
+        action=str(candidate["action"]),
+        resource=str(candidate["resource"]),
+        warnings=warnings,
+    )
+    result["source"] = candidate.get("source")
+    result["reason"] = candidate.get("reason")
+    result["mapping_uuid"] = candidate.get("mapping_uuid")
+    return result
 
 
 def _lambda_iam_role_summary(runtime: AwsRuntime, role_arn: str) -> dict[str, Any]:

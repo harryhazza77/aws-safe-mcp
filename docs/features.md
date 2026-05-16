@@ -30,6 +30,9 @@ Related tools:
 - Map Lambda dependencies such as execution role, log group, VPC attachment,
   dead-letter target, aliases, event source mappings, and inferred permission
   checks.
+- Diagnose Lambda event source mappings with source state, batch/window
+  settings, failure destination, filter presence, and inferred role permission
+  checks without reading queue messages or stream records.
 - Trace inferred Lambda network reachability from static VPC configuration.
 - Check whether a Lambda execution role appears allowed to perform a specific
   IAM action on a specific resource ARN.
@@ -38,6 +41,7 @@ Related tools:
 
 - `list_lambda_functions`
 - `get_lambda_summary`
+- `get_lambda_event_source_mapping_diagnostics`
 - `get_lambda_recent_errors`
 - `investigate_lambda_failure`
 - `explain_lambda_dependencies`

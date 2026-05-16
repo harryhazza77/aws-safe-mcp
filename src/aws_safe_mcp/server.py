@@ -50,6 +50,9 @@ from aws_safe_mcp.tools.lambda_tools import (
     explain_lambda_network_access as explain_lambda_network_access_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
+    get_lambda_event_source_mapping_diagnostics as get_lambda_event_source_mapping_diagnostics_tool,
+)
+from aws_safe_mcp.tools.lambda_tools import (
     get_lambda_recent_errors as get_lambda_recent_errors_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
@@ -147,6 +150,25 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
             runtime,
             function_name=function_name,
             region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("get_lambda_event_source_mapping_diagnostics")
+    def get_lambda_event_source_mapping_diagnostics(
+        function_name: str,
+        region: str | None = None,
+        max_results: int | None = None,
+        include_permission_checks: bool = True,
+        max_permission_checks: int | None = None,
+    ) -> dict[str, object]:
+        """Summarize Lambda event source mappings and inferred IAM checks."""
+        return get_lambda_event_source_mapping_diagnostics_tool(
+            runtime,
+            function_name=function_name,
+            region=region,
+            max_results=max_results,
+            include_permission_checks=include_permission_checks,
+            max_permission_checks=max_permission_checks,
         )
 
     @mcp.tool()

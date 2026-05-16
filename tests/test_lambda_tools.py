@@ -12,6 +12,7 @@ from aws_safe_mcp.tools.lambda_tools import (
     check_lambda_permission_path,
     explain_lambda_dependencies,
     explain_lambda_network_access,
+    get_lambda_event_source_mapping_diagnostics,
     get_lambda_recent_errors,
     get_lambda_summary,
     investigate_lambda_failure,
@@ -106,8 +107,20 @@ class FakeLambdaClient:
                 {
                     "UUID": "mapping-1",
                     "State": "Enabled",
+                    "StateTransitionReason": "User action",
+                    "LastProcessingResult": "OK",
                     "EventSourceArn": "arn:aws:sqs:eu-west-2:123456789012:queue",
+                    "FunctionArn": "arn:aws:lambda:eu-west-2:123456789012:function:dev-api",
                     "BatchSize": 10,
+                    "MaximumBatchingWindowInSeconds": 5,
+                    "FunctionResponseTypes": ["ReportBatchItemFailures"],
+                    "DestinationConfig": {
+                        "OnFailure": {
+                            "Destination": "arn:aws:sqs:eu-west-2:123456789012:esm-dlq"
+                        }
+                    },
+                    "ScalingConfig": {"MaximumConcurrency": 3},
+                    "FilterCriteria": {"Filters": [{"Pattern": '{"secret":"must-not-leak"}'}]},
                 }
             ]
         }
@@ -410,6 +423,60 @@ def test_get_lambda_summary_reports_metric_data_warnings() -> None:
 
     assert result["recent_metrics"]["available"] is True
     assert result["recent_metrics"]["warnings"] == ["Metric errors returned status PartialData"]
+
+
+def test_get_lambda_event_source_mapping_diagnostics_returns_safe_metadata() -> None:
+    runtime = FakeRuntime()
+
+    result = get_lambda_event_source_mapping_diagnostics(runtime, "dev-api")
+
+    assert result["summary"] == {
+        "mapping_count": 1,
+        "enabled_count": 1,
+        "disabled_count": 0,
+        "source_types": ["sqs"],
+        "warning_count": 0,
+    }
+    mapping = result["mappings"][0]
+    assert mapping["uuid"] == "mapping-1"
+    assert mapping["source_type"] == "sqs"
+    assert mapping["last_processing_result"] == "OK"
+    assert mapping["maximum_batching_window_seconds"] == 5
+    assert mapping["destination_config"]["on_failure_arn"].endswith(":esm-dlq")
+    assert mapping["function_response_types"] == ["ReportBatchItemFailures"]
+    assert mapping["scaling_config"] == {"maximum_concurrency": 3}
+    assert mapping["filter_criteria_configured"] is True
+    assert "must-not-leak" not in str(result)
+    assert result["permission_hints"][0]["actions_to_check"] == [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+    ]
+    assert result["permission_checks"]["enabled"] is True
+    assert result["permission_checks"]["checked_count"] == 3
+    assert {check["mapping_uuid"] for check in result["permission_checks"]["checks"]} == {
+        "mapping-1"
+    }
+    assert runtime.iam_client.simulation_requests[0]["ActionNames"] == ["sqs:ReceiveMessage"]
+
+
+def test_get_lambda_event_source_mapping_diagnostics_can_skip_permission_checks() -> None:
+    result = get_lambda_event_source_mapping_diagnostics(
+        FakeRuntime(),
+        "dev-api",
+        include_permission_checks=False,
+    )
+
+    assert result["permission_checks"]["enabled"] is False
+    assert result["permission_checks"]["checked_count"] == 0
+
+
+def test_get_lambda_event_source_mapping_diagnostics_normalizes_list_errors() -> None:
+    runtime = FakeRuntime()
+    runtime.lambda_client = FailingEventSourceMappingLambdaClient()
+
+    with pytest.raises(AwsToolError, match="AWS lambda.ListEventSourceMappings AccessDenied"):
+        get_lambda_event_source_mapping_diagnostics(runtime, "dev-api")
 
 
 def test_explain_lambda_network_access_reports_non_vpc_runtime() -> None:
@@ -779,6 +846,19 @@ class FailingConfigurationLambdaClient(FakeLambdaClient):
                 }
             },
             "GetFunctionConfiguration",
+        )
+
+
+class FailingEventSourceMappingLambdaClient(FakeLambdaClient):
+    def list_event_source_mappings(self, **_: Any) -> dict[str, Any]:
+        raise ClientError(
+            {
+                "Error": {
+                    "Code": "AccessDenied",
+                    "Message": "event source denied token=must-not-leak",
+                }
+            },
+            "ListEventSourceMappings",
         )
 
 

@@ -59,6 +59,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "aws_identity",
         "list_lambda_functions",
         "get_lambda_summary",
+        "get_lambda_event_source_mapping_diagnostics",
         "get_lambda_recent_errors",
         "investigate_lambda_failure",
         "explain_lambda_dependencies",

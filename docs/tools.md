@@ -60,6 +60,21 @@ Inputs:
 - `function_name` required
 - `region` optional
 
+### `get_lambda_event_source_mapping_diagnostics`
+
+Summarizes Lambda event source mappings without reading queue messages or stream
+records. The result includes source type, state, batch/window settings, last
+processing result, failure destination, filter presence, permission hints, and
+bounded IAM simulation checks for the Lambda execution role.
+
+Inputs:
+
+- `function_name` required
+- `region` optional
+- `max_results` optional
+- `include_permission_checks` optional, default `true`
+- `max_permission_checks` optional
+
 ### `get_lambda_recent_errors`
 
 Returns recent error-like CloudWatch log events for one Lambda function. The
