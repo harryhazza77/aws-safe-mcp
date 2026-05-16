@@ -45,6 +45,7 @@ from aws_safe_mcp.tools.eventbridge import (
 from aws_safe_mcp.tools.eventbridge import (
     list_eventbridge_rules as list_eventbridge_rules_tool,
 )
+from aws_safe_mcp.tools.iam import get_iam_role_summary as get_iam_role_summary_tool
 from aws_safe_mcp.tools.identity import aws_auth_status as get_aws_auth_status
 from aws_safe_mcp.tools.identity import aws_identity as get_aws_identity
 from aws_safe_mcp.tools.lambda_tools import (
@@ -111,6 +112,7 @@ def create_server(runtime: AwsRuntime) -> FastMCP:
     mcp = FastMCP("aws-safe-mcp")
     audit = AuditLogger(redaction=runtime.config.redaction)
     _register_identity_tools(mcp, audit, runtime)
+    _register_iam_tools(mcp, audit, runtime)
     _register_lambda_tools(mcp, audit, runtime)
     _register_step_functions_tools(mcp, audit, runtime)
     _register_s3_tools(mcp, audit, runtime)
@@ -136,6 +138,21 @@ def _register_identity_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRunti
     def aws_identity() -> dict[str, str | bool | None]:
         """Show authenticated AWS account, ARN, profile, region, and read-only mode."""
         return get_aws_identity(runtime)
+
+
+def _register_iam_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -> None:
+    @mcp.tool()
+    @audit.tool("get_iam_role_summary")
+    def get_iam_role_summary(
+        role_name: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Summarize one IAM role without returning full policy documents."""
+        return get_iam_role_summary_tool(
+            runtime,
+            role_name=role_name,
+            region=region,
+        )
 
 
 def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -> None:

@@ -20,6 +20,17 @@ Related tools:
 - `aws_auth_status`
 - `aws_identity`
 
+## IAM Inspection
+
+- Summarize IAM roles by name or ARN without returning full trust or permission
+  policy documents.
+- Report trust-policy shape, service/AWS/federated principals, attached and
+  inline policy counts/names, and permission-boundary presence.
+
+Related tools:
+
+- `get_iam_role_summary`
+
 ## Lambda Investigation
 
 - List visible Lambda functions with concise configuration summaries.

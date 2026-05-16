@@ -23,22 +23,7 @@ Avoid features that:
 
 ## Feature Candidates
 
-### 1. IAM Role Summary Tool
-
-Add a read-only IAM role summary for execution roles, including trust policy
-shape, attached/inline policy counts, service principals, and permission
-boundary presence without returning full policy JSON.
-
-- Value: many dependency tools need role context; a direct tool helps users
-  inspect the role safely.
-- Existing coverage: Lambda and Step Functions dependency tools include private
-  role summaries for their execution roles. This feature should expose a
-  generic role summary tool and reuse the same safety shape.
-- Fixture: Lambda and Step Functions roles.
-- Emulator: Floci and MiniStack.
-- Acceptance: full policy documents are not returned.
-
-### 2. KMS Key Metadata Summary
+### 1. KMS Key Metadata Summary
 
 Add KMS key inventory/summary for key state, usage, rotation, aliases, and
 policy availability without decrypting or generating data keys.
@@ -51,7 +36,7 @@ policy availability without decrypting or generating data keys.
 - Emulator: MiniStack or Floci depending on KMS support.
 - Acceptance: no cryptographic material or decrypt operations are used.
 
-### 3. ECS Task And Service Summary
+### 2. ECS Task And Service Summary
 
 Add bounded ECS cluster/service/task definition summaries, focusing on desired
 count, deployment state, task role, execution role, containers, log groups, and
@@ -62,7 +47,7 @@ load balancer wiring.
 - Emulator: MiniStack likely.
 - Acceptance: no container env values or secrets are returned.
 
-### 4. Cross-Service Incident Brief
+### 3. Cross-Service Incident Brief
 
 Add an incident-brief tool that accepts a resource name fragment and produces a
 compact investigation bundle from existing safe tools: matching resources,

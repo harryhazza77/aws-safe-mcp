@@ -38,6 +38,19 @@ and a concise message when credentials are missing or expired.
 Returns the current AWS account, ARN, user ID, configured profile, configured
 region, and read-only status.
 
+## IAM
+
+### `get_iam_role_summary`
+
+Summarizes one IAM role by name or ARN. The result includes trust-policy shape,
+attached and inline policy counts/names, service principals, and permission
+boundary presence without returning full policy documents.
+
+Inputs:
+
+- `role_name` required, accepts a role name or role ARN
+- `region` optional
+
 ## Lambda
 
 ### `list_lambda_functions`
