@@ -105,6 +105,11 @@ def investigate_step_function_failure(
     )
     failed_state = summary.get("failed_state")
     signals = _step_function_failure_signals(failed_state)
+    definition_context, warnings = _step_function_failure_definition_context(
+        runtime,
+        execution_arn,
+        summary,
+    )
 
     return {
         "execution_arn": execution_arn,
@@ -113,8 +118,17 @@ def investigate_step_function_failure(
         "region": summary.get("region"),
         "status": summary.get("status"),
         "diagnostic_summary": _step_function_diagnostic_summary(summary, signals),
-        "warnings": [],
+        "warnings": warnings,
         "failed_state": failed_state,
+        "failed_state_definition": definition_context.get("failed_state_definition"),
+        "failed_state_path": definition_context.get("failed_state_path"),
+        "previous_event_context": (
+            failed_state.get("previous_event_context")
+            if isinstance(failed_state, dict)
+            else None
+        ),
+        "downstream_target": definition_context.get("downstream_target"),
+        "retry_catch": definition_context.get("retry_catch"),
         "signals": signals,
         "suggested_next_checks": _step_function_suggested_next_checks(signals),
     }
@@ -276,7 +290,28 @@ def _asl_state_summary(name: str, value: Any) -> dict[str, Any]:
         "end": state.get("End") is True,
         "timeout_seconds": state.get("TimeoutSeconds"),
         "heartbeat_seconds": state.get("HeartbeatSeconds"),
+        "retry": _retry_catch_summary(state.get("Retry")),
+        "catch": _retry_catch_summary(state.get("Catch")),
     }
+
+
+def _retry_catch_summary(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    summary = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        summary.append(
+            {
+                "error_equals": item.get("ErrorEquals", []),
+                "next": item.get("Next"),
+                "interval_seconds": item.get("IntervalSeconds"),
+                "max_attempts": item.get("MaxAttempts"),
+                "backoff_rate": item.get("BackoffRate"),
+            }
+        )
+    return summary
 
 
 def _step_function_flow_summary(
@@ -773,6 +808,116 @@ def _failed_event_summary(
         "state_name": _state_entered_name(state_entered) or details.get("name"),
         "error": details.get("error"),
         "cause": details.get("cause"),
+        "previous_event_context": _previous_event_context(state_entered),
+    }
+
+
+def _previous_event_context(event: dict[str, Any] | None) -> dict[str, Any] | None:
+    if event is None:
+        return None
+    return {
+        "event_id": event.get("id"),
+        "previous_event_id": event.get("previousEventId"),
+        "timestamp": isoformat(event.get("timestamp")),
+        "type": event.get("type"),
+        "state_name": _state_entered_name(event),
+    }
+
+
+def _step_function_failure_definition_context(
+    runtime: AwsRuntime,
+    execution_arn: str,
+    summary: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    failed_state = summary.get("failed_state")
+    if not isinstance(failed_state, dict) or not failed_state.get("state_name"):
+        return {}, []
+    state_machine_arn = _state_machine_arn_from_execution_arn(execution_arn)
+    if state_machine_arn is None:
+        return {}, ["Unable to derive state machine ARN from execution ARN"]
+    region = str(summary.get("region") or runtime.region)
+    client = runtime.client("stepfunctions", region=region)
+    try:
+        state_machine = client.describe_state_machine(stateMachineArn=state_machine_arn)
+    except (BotoCoreError, ClientError) as exc:
+        return {}, [str(normalize_aws_error(exc, "states.DescribeStateMachine"))]
+
+    definition, warnings = _parse_state_machine_definition(
+        state_machine.get("definition"),
+        runtime.config.redaction.max_string_length,
+    )
+    states = _asl_states(definition)
+    state = next(
+        (item for item in states if item.get("name") == failed_state.get("state_name")),
+        None,
+    )
+    if state is None:
+        return {}, [*warnings, "Failed state was not found in the state machine definition"]
+    edges = _step_function_dependency_edges(state_machine_arn, states)
+    downstream_edge = next(
+        (edge for edge in edges if edge.get("state_name") == state.get("name")),
+        None,
+    )
+    path = _path_to_state(definition, states, str(state["name"]))
+    return {
+        "failed_state_definition": {
+            "name": state.get("name"),
+            "type": state.get("type"),
+            "resource": state.get("resource"),
+            "integration": state.get("integration"),
+            "target_arn": state.get("target_arn"),
+            "next": state.get("next"),
+            "end": state.get("end"),
+            "timeout_seconds": state.get("timeout_seconds"),
+            "heartbeat_seconds": state.get("heartbeat_seconds"),
+        },
+        "failed_state_path": path,
+        "downstream_target": _downstream_target_context(downstream_edge),
+        "retry_catch": {
+            "retry": state.get("retry", []),
+            "catch": state.get("catch", []),
+            "has_retry": bool(state.get("retry")),
+            "has_catch": bool(state.get("catch")),
+        },
+    }, warnings
+
+
+def _state_machine_arn_from_execution_arn(execution_arn: str) -> str | None:
+    match = re.fullmatch(
+        r"arn:(?P<partition>aws[a-zA-Z-]*):states:(?P<region>[^:]+):"
+        r"(?P<account>\d{12}):execution:(?P<state_machine_name>[^:]+):.+",
+        execution_arn,
+    )
+    if not match:
+        return None
+    parts = match.groupdict()
+    return (
+        f"arn:{parts['partition']}:states:{parts['region']}:{parts['account']}:"
+        f"stateMachine:{parts['state_machine_name']}"
+    )
+
+
+def _path_to_state(
+    definition: dict[str, Any],
+    states: list[dict[str, Any]],
+    target_state_name: str,
+) -> list[str]:
+    states_by_name = {str(state.get("name")): state for state in states}
+    start_at = definition.get("StartAt") if isinstance(definition, dict) else None
+    for path in _linear_paths(states_by_name, start_at):
+        if target_state_name in path:
+            return path[: path.index(target_state_name) + 1]
+    return [target_state_name]
+
+
+def _downstream_target_context(edge: dict[str, Any] | None) -> dict[str, Any] | None:
+    if edge is None:
+        return None
+    return {
+        "target": edge.get("to"),
+        "target_type": edge.get("target_type"),
+        "relationship": edge.get("relationship"),
+        "resource": edge.get("resource"),
     }
 
 

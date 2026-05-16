@@ -155,7 +155,8 @@ Inputs:
 ### `investigate_step_function_failure`
 
 Diagnoses one execution using execution status, failed history event,
-error/cause text, and suggested next checks.
+error/cause text, previous event context, the failed ASL state definition,
+retry/catch shape, likely downstream target, and suggested next checks.
 
 Inputs:
 

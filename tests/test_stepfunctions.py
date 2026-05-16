@@ -80,6 +80,20 @@ class FakeStepFunctionsClient:
                             "Resource": (
                                 "arn:aws:lambda:eu-west-2:123456789012:function:dev-worker"
                             ),
+                            "Retry": [
+                                {
+                                    "ErrorEquals": ["Lambda.ServiceException"],
+                                    "IntervalSeconds": 2,
+                                    "MaxAttempts": 3,
+                                    "BackoffRate": 2,
+                                }
+                            ],
+                            "Catch": [
+                                {
+                                    "ErrorEquals": ["States.ALL"],
+                                    "Next": "Notify",
+                                }
+                            ],
                             "Next": "ShouldNotify",
                         },
                         "ShouldNotify": {
@@ -392,6 +406,35 @@ def test_investigate_step_function_failure_reports_task_failure() -> None:
     assert result["signals"]["lambda_or_task_failure"] is True
     assert result["signals"]["service_exception"] is True
     assert result["warnings"] == []
+    assert result["failed_state_path"] == ["CallWorker"]
+    assert result["previous_event_context"] == {
+        "event_id": 6,
+        "previous_event_id": 5,
+        "timestamp": "2026-01-01T12:00:55+00:00",
+        "type": "TaskStateEntered",
+        "state_name": "CallWorker",
+    }
+    assert result["failed_state_definition"] == {
+        "name": "CallWorker",
+        "type": "Task",
+        "resource": "arn:aws:lambda:eu-west-2:123456789012:function:dev-worker",
+        "integration": "lambda",
+        "target_arn": "arn:aws:lambda:eu-west-2:123456789012:function:dev-worker",
+        "next": "ShouldNotify",
+        "end": False,
+        "timeout_seconds": None,
+        "heartbeat_seconds": None,
+    }
+    assert result["downstream_target"] == {
+        "target": "arn:aws:lambda:eu-west-2:123456789012:function:dev-worker",
+        "target_type": "lambda",
+        "relationship": "invokes_task",
+        "resource": "arn:aws:lambda:eu-west-2:123456789012:function:dev-worker",
+    }
+    assert result["retry_catch"]["has_retry"] is True
+    assert result["retry_catch"]["has_catch"] is True
+    assert result["retry_catch"]["retry"][0]["error_equals"] == ["Lambda.ServiceException"]
+    assert result["retry_catch"]["catch"][0]["next"] == "Notify"
     assert any("Lambda logs" in check for check in result["suggested_next_checks"])
 
 

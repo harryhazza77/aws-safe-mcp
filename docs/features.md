@@ -49,6 +49,7 @@ Related tools:
 - List visible state machines.
 - Summarize one execution with redacted, truncated input and output.
 - Diagnose one failed execution using execution history, failed-state context,
+  previous event context, retry/catch shape, downstream target linkage,
   error/cause text, and suggested next checks.
 - Map a state machine into a dependency graph from its ASL definition without
   returning the full definition.
