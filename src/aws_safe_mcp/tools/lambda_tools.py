@@ -709,6 +709,37 @@ def prove_lambda_invocation_path(
     }
 
 
+def analyze_cross_account_lambda_invocation(
+    runtime: AwsRuntime,
+    function_name: str,
+    caller_principal: str,
+    source_arn: str | None = None,
+    region: str | None = None,
+) -> dict[str, Any]:
+    proof = prove_lambda_invocation_path(
+        runtime,
+        function_name=function_name,
+        caller_principal=caller_principal,
+        source_arn=source_arn,
+        region=region,
+    )
+    cross_account = _cross_account_invocation_summary(
+        function_arn=str(proof.get("function_arn") or ""),
+        caller_principal=caller_principal,
+        source_arn=source_arn,
+        proof_summary=proof.get("proof_summary") or {},
+    )
+    return {
+        "function_name": proof["function_name"],
+        "region": proof["region"],
+        "caller_principal": proof["caller_principal"],
+        "source_arn": proof["source_arn"],
+        "cross_account": cross_account,
+        "invocation_proof": proof,
+        "warnings": proof["warnings"],
+    }
+
+
 def check_lambda_to_sqs_sendability(
     runtime: AwsRuntime,
     function_name: str,
@@ -2840,6 +2871,40 @@ def _lambda_invocation_region_account_check(
         "caller_account": caller_account,
         "source_account": source_account,
         "source_region": source_region,
+    }
+
+
+def _cross_account_invocation_summary(
+    *,
+    function_arn: str,
+    caller_principal: str,
+    source_arn: str | None,
+    proof_summary: dict[str, Any],
+) -> dict[str, Any]:
+    function_account = _arn_account(function_arn)
+    caller_account = _arn_account(caller_principal) if caller_principal.startswith("arn:") else None
+    source_account = _arn_account(source_arn) if source_arn else None
+    accounts = {
+        account
+        for account in [function_account, caller_account, source_account]
+        if account is not None
+    }
+    findings = []
+    if len(accounts) > 1:
+        findings.append("cross_account_path")
+    if caller_account and function_account and caller_account != function_account:
+        findings.append("caller_account_differs_from_lambda")
+    if source_account and function_account and source_account != function_account:
+        findings.append("source_account_differs_from_lambda")
+    if proof_summary.get("status") == "blocked":
+        findings.append("invocation_proof_blocked")
+    return {
+        "is_cross_account": len(accounts) > 1,
+        "function_account": function_account,
+        "caller_account": caller_account,
+        "source_account": source_account,
+        "finding_count": len(findings),
+        "findings": findings,
     }
 
 

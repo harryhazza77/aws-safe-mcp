@@ -282,6 +282,19 @@ Inputs:
 - `source_arn` optional
 - `region` optional
 
+### `analyze_cross_account_lambda_invocation`
+
+Wraps Lambda invocation proof with cross-account findings for caller principal,
+source ARN, and Lambda account drift. It highlights proof blockers without
+returning policy documents.
+
+Inputs:
+
+- `function_name` required
+- `caller_principal` required, as a service principal or AWS ARN
+- `source_arn` optional
+- `region` optional
+
 ## Step Functions
 
 ### `list_step_functions`

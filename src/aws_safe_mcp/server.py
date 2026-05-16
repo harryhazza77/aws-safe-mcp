@@ -58,6 +58,9 @@ from aws_safe_mcp.tools.kms import check_kms_dependent_path as check_kms_depende
 from aws_safe_mcp.tools.kms import get_kms_key_summary as get_kms_key_summary_tool
 from aws_safe_mcp.tools.kms import list_kms_keys as list_kms_keys_tool
 from aws_safe_mcp.tools.lambda_tools import (
+    analyze_cross_account_lambda_invocation as analyze_cross_account_lambda_invocation_tool,
+)
+from aws_safe_mcp.tools.lambda_tools import (
     audit_async_lambda_failure_path as audit_async_lambda_failure_path_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
@@ -449,6 +452,23 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
     ) -> dict[str, object]:
         """Prove the resource-policy and caller-policy edges for Lambda invocation."""
         return prove_lambda_invocation_path_tool(
+            runtime,
+            function_name=function_name,
+            caller_principal=caller_principal,
+            source_arn=source_arn,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("analyze_cross_account_lambda_invocation")
+    def analyze_cross_account_lambda_invocation(
+        function_name: str,
+        caller_principal: str,
+        source_arn: str | None = None,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Analyze cross-account Lambda invocation trust and proof status."""
+        return analyze_cross_account_lambda_invocation_tool(
             runtime,
             function_name=function_name,
             caller_principal=caller_principal,

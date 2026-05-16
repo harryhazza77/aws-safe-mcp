@@ -30,21 +30,14 @@ current public tool surface in `src/aws_safe_mcp/server.py` and
 `src/aws_safe_mcp/tools/*`; scopes focus on new diagnostic value beyond existing
 single-resource summaries, dependency graphs, and permission checks.
 
-1. **Cross-account invocation analyzer** _(Large)_
-    - When a Lambda references queues, topics, buses, buckets, or functions in
-      another account, check both sides of IAM/resource policy trust and flag
-      missing principals, source ARN/account conditions, organization
-      condition mismatches, KMS gaps, and partition/region drift.
-    - Extend current same-account and service-specific permission checks.
-
-2. **Dead-letter and retry topology audit** _(XLarge)_
+1. **Dead-letter and retry topology audit** _(XLarge)_
     - Build a graph of Lambda destinations, SQS redrive policies, SNS/SQS
       DLQs, EventBridge DLQs, and Step Functions catches. Flag loops,
       unconsumed DLQs, too-low max receive counts, and missing alarms.
     - Compose existing DLQ fragments from Lambda, SQS, SNS, EventBridge, Step
       Functions, and CloudWatch alarm tools into one topology audit.
 
-3. **End-to-end transaction trace plan** _(XLarge)_
+2. **End-to-end transaction trace plan** _(XLarge)_
     - Given a seed resource name, stitch likely path across API Gateway,
       EventBridge, Step Functions, Lambda, SQS, SNS, DynamoDB streams, and logs.
       Return ordered checks, probable breakpoints, and safe commands/tools to
@@ -52,7 +45,7 @@ single-resource summaries, dependency graphs, and permission checks.
     - Extend current event-driven flow stitching and incident brief beyond
       EventBridge-centered paths.
 
-4. **Risk-scored dependency health summary** _(XLarge)_
+3. **Risk-scored dependency health summary** _(XLarge)_
     - For an application prefix, assemble discovered resources into a redacted
       graph and score each edge for callability, network reachability, policy
       completeness, retry safety, observability, and drift from expected naming

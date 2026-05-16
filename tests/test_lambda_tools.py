@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.lambda_tools import (
+    analyze_cross_account_lambda_invocation,
     audit_async_lambda_failure_path,
     check_lambda_permission_path,
     check_lambda_to_sqs_sendability,
@@ -367,7 +368,6 @@ class FakeIamClient:
         ActionNames: list[str],
         ResourceArns: list[str],
     ) -> dict[str, Any]:
-        assert PolicySourceArn == "arn:aws:iam::123456789012:role/dev-lambda"
         self.simulation_requests.append(
             {
                 "PolicySourceArn": PolicySourceArn,
@@ -1309,6 +1309,29 @@ def test_prove_lambda_invocation_path_reports_first_blocked_edge() -> None:
 def test_prove_lambda_invocation_path_validates_caller_principal() -> None:
     with pytest.raises(ToolInputError, match="caller_principal"):
         prove_lambda_invocation_path(FakeRuntime(), "dev-api", "api-gateway")
+
+
+def test_analyze_cross_account_lambda_invocation_flags_account_drift() -> None:
+    result = analyze_cross_account_lambda_invocation(
+        FakeRuntime(),
+        "dev-api",
+        "arn:aws:iam::999999999999:role/caller",
+        source_arn="arn:aws:sqs:eu-west-2:999999999999:queue",
+    )
+
+    assert result["cross_account"] == {
+        "is_cross_account": True,
+        "function_account": "123456789012",
+        "caller_account": "999999999999",
+        "source_account": "999999999999",
+        "finding_count": 4,
+        "findings": [
+            "cross_account_path",
+            "caller_account_differs_from_lambda",
+            "source_account_differs_from_lambda",
+            "invocation_proof_blocked",
+        ],
+    }
 
 
 class QuietCloudWatchClient:

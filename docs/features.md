@@ -101,6 +101,8 @@ Related tools:
 - Prove a suspected Lambda invocation path by checking trigger evidence,
   Lambda resource policy, optional caller IAM policy, source conditions, and
   region/account alignment.
+- Analyze cross-account Lambda invocation paths and flag caller/source account
+  drift alongside the invocation proof result.
 
 Related tools:
 
@@ -118,6 +120,7 @@ Related tools:
 - `check_lambda_permission_path`
 - `check_lambda_to_sqs_sendability`
 - `prove_lambda_invocation_path`
+- `analyze_cross_account_lambda_invocation`
 
 ## Step Functions Investigation
 
