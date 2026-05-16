@@ -156,7 +156,9 @@ Maps one Lambda into a compact dependency graph. It combines configuration,
 execution role metadata, CloudWatch log group expectations, VPC attachment,
 dead-letter targets, aliases, event source mappings, permission hints, and
 inferred IAM simulation checks. It does not return IAM policy documents or
-secret values.
+secret values. Environment dependency hints classify redacted values by shape
+such as ARN, SQS queue URL, URL, or literal name, and expose only metadata such
+as likely service, region, partition, account ID, and confidence.
 
 Inputs:
 

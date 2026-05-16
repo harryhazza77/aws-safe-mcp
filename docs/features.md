@@ -66,6 +66,9 @@ Related tools:
 - Map Lambda dependencies such as execution role, log group, VPC attachment,
   dead-letter target, aliases, event source mappings, and inferred permission
   checks.
+- Classify redacted Lambda environment dependency values such as ARNs, SQS
+  queue URLs, HTTP URLs, literal names, and secret-like keys without returning
+  the values themselves.
 - Summarize Lambda aliases, weighted traffic routing, published versions,
   provisioned concurrency presence, and resource policy hints without fetching
   code package contents or returning full policy JSON.

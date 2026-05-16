@@ -86,8 +86,11 @@ class FakeLambdaClient:
             "Description": "API handler",
             "Environment": {
                 "Variables": {
+                    "API_URL": "https://api.internal",
+                    "QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/123456789012/dev-queue",
                     "PUBLIC_NAME": "example",
                     "SECRET_TOKEN": "must-not-leak",
+                    "TOPIC_ARN": "arn:aws:sns:eu-west-2:123456789012:dev-topic",
                 }
             },
             "VpcConfig": {
@@ -459,8 +462,25 @@ def test_list_lambda_functions_normalizes_aws_errors() -> None:
 def test_get_lambda_summary_never_returns_environment_values() -> None:
     result = get_lambda_summary(FakeRuntime(), "dev-api")
 
-    assert result["environment_variable_keys"] == ["PUBLIC_NAME", "SECRET_TOKEN"]
+    assert result["environment_variable_keys"] == [
+        "API_URL",
+        "PUBLIC_NAME",
+        "QUEUE_URL",
+        "SECRET_TOKEN",
+        "TOPIC_ARN",
+    ]
     assert "must-not-leak" not in str(result)
+    assert "dev-queue" not in str(result)
+    assert "dev-topic" not in str(result)
+    assert {
+        (hint["key"], hint["likely_service"], hint["value_shape"])
+        for hint in result["environment_dependency_hints"]
+    } == {
+        ("API_URL", "http", "url"),
+        ("QUEUE_URL", "sqs", "queue_url"),
+        ("SECRET_TOKEN", "secretsmanager", "name_or_literal"),
+        ("TOPIC_ARN", "sns", "arn"),
+    }
     assert result["vpc"] == {
         "enabled": True,
         "vpc_id": "vpc-123",
@@ -806,6 +826,8 @@ def test_explain_lambda_dependencies_returns_graph_and_permission_hints() -> Non
         for hint in result["permission_hints"]
     )
     assert any("sqs:SendMessage" in hint["actions_to_check"] for hint in result["permission_hints"])
+    assert any(edge["relationship"] == "may_depend_on" for edge in result["edges"])
+    assert result["summary"]["environment_dependency_hint_count"] == 4
     assert result["permission_checks"]["enabled"] is True
     checked_actions = {check["action"] for check in result["permission_checks"]["checks"]}
     assert "logs:PutLogEvents" in checked_actions

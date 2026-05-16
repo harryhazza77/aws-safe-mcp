@@ -5,6 +5,7 @@ import json
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 
 from botocore.exceptions import BotoCoreError, ClientError
 
@@ -360,6 +361,7 @@ def explain_lambda_dependencies(
         "aliases": aliases,
         "event_sources": event_sources,
         "unresolved_resource_hints": unresolved_resource_hints,
+        "environment_dependency_hints": summary.get("environment_dependency_hints", []),
     }
 
     return {
@@ -377,6 +379,9 @@ def explain_lambda_dependencies(
             "state": summary.get("state"),
             "last_update_status": summary.get("last_update_status"),
             "environment_variable_keys": summary.get("environment_variable_keys", []),
+            "environment_dependency_hint_count": len(
+                summary.get("environment_dependency_hints", [])
+            ),
         },
         "graph_summary": dependency_graph_summary(
             nodes=nodes,
@@ -387,6 +392,7 @@ def explain_lambda_dependencies(
         "nodes": nodes,
         "edges": edges,
         "unresolved_resource_hints": unresolved_resource_hints,
+        "environment_dependency_hints": summary.get("environment_dependency_hints", []),
         "permission_hints": permission_hints,
         "permission_checks": permission_checks,
         "warnings": warnings,
@@ -519,6 +525,7 @@ def _lambda_summary(item: dict[str, Any], max_string_length: int) -> dict[str, A
         "role_arn": item.get("Role"),
         "description": truncate_optional(item.get("Description"), max_string_length),
         "environment_variable_keys": sorted(str(key) for key in variables),
+        "environment_dependency_hints": _lambda_environment_dependency_hints(variables),
         "vpc": {
             "enabled": bool(vpc_config.get("VpcId")),
             "vpc_id": vpc_config.get("VpcId") or None,
@@ -533,6 +540,145 @@ def _lambda_summary(item: dict[str, Any], max_string_length: int) -> dict[str, A
         "state_reason": truncate_optional(item.get("StateReason"), max_string_length),
         "last_update_status": item.get("LastUpdateStatus"),
     }
+
+
+def _lambda_environment_dependency_hints(variables: dict[Any, Any]) -> list[dict[str, Any]]:
+    hints = []
+    for raw_key, raw_value in variables.items():
+        key = str(raw_key)
+        value = str(raw_value or "")
+        key_service = _likely_service_from_name(key)
+        value_hint = _environment_value_hint(value)
+        service = value_hint.get("service") or key_service
+        if not service:
+            continue
+        confidence = "high" if value_hint.get("value_shape") in {"arn", "queue_url"} else "medium"
+        if value_hint.get("value_shape") == "unknown":
+            confidence = "low"
+        hints.append(
+            {
+                "source": "environment_variable",
+                "key": key,
+                "likely_service": service,
+                "value_shape": value_hint["value_shape"],
+                "confidence": confidence,
+                "target": {
+                    "service": service,
+                    "partition": value_hint.get("partition"),
+                    "region": value_hint.get("region"),
+                    "account_id": value_hint.get("account_id"),
+                    "resource_type": value_hint.get("resource_type"),
+                    "host_kind": value_hint.get("host_kind"),
+                },
+                "reason": _environment_dependency_reason(key, service, value_hint),
+            }
+        )
+    return _dedupe_unresolved_resource_hints(hints)
+
+
+def _environment_value_hint(value: str) -> dict[str, str | None]:
+    arn = _environment_arn_hint(value)
+    if arn:
+        return arn
+    queue_url = _environment_queue_url_hint(value)
+    if queue_url:
+        return queue_url
+    url = _environment_url_hint(value)
+    if url:
+        return url
+    return {"value_shape": "name_or_literal"}
+
+
+def _environment_arn_hint(value: str) -> dict[str, str | None] | None:
+    parts = value.split(":", 5)
+    if len(parts) < 6 or parts[0] != "arn":
+        return None
+    resource = parts[5]
+    resource_type = None
+    if "/" in resource:
+        resource_type = resource.split("/", 1)[0]
+    elif ":" in resource:
+        resource_type = resource.split(":", 1)[0]
+    return {
+        "value_shape": "arn",
+        "service": parts[2] or None,
+        "partition": parts[1] or None,
+        "region": parts[3] or None,
+        "account_id": parts[4] or None,
+        "resource_type": resource_type,
+    }
+
+
+def _environment_queue_url_hint(value: str) -> dict[str, str | None] | None:
+    match = re.fullmatch(
+        r"https?://sqs[.-](?P<region>[^./]+)\.amazonaws\.com(?:\.cn)?/"
+        r"(?P<account_id>\d{12})/(?P<name>[^/?]+)",
+        value,
+    )
+    if not match:
+        return None
+    return {
+        "value_shape": "queue_url",
+        "service": "sqs",
+        "partition": "aws-cn" if ".amazonaws.com.cn/" in value else "aws",
+        "region": match.group("region"),
+        "account_id": match.group("account_id"),
+        "resource_type": "queue",
+    }
+
+
+def _environment_url_hint(value: str) -> dict[str, str | None] | None:
+    parsed = urlparse(value)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    host = parsed.hostname or ""
+    parts = host.split(".")
+    return {
+        "value_shape": "url",
+        "service": parts[0] if host.endswith(".amazonaws.com") else "http",
+        "partition": _environment_partition_from_host(host),
+        "region": _environment_region_from_host(parts),
+        "account_id": None,
+        "resource_type": None,
+        "host_kind": _environment_host_kind(host),
+    }
+
+
+def _environment_region_from_host(parts: list[str]) -> str | None:
+    for part in parts:
+        if re.fullmatch(r"[a-z]{2}(?:-gov)?-[a-z]+-\d", part):
+            return part
+    return None
+
+
+def _environment_partition_from_host(host: str) -> str | None:
+    if host.endswith(".amazonaws.com.cn"):
+        return "aws-cn"
+    if host.endswith(".amazonaws.com"):
+        return "aws"
+    return None
+
+
+def _environment_host_kind(host: str) -> str:
+    if host.endswith((".amazonaws.com", ".amazonaws.com.cn")):
+        return "aws_service_endpoint"
+    if host.endswith((".local", ".internal")):
+        return "private_dns"
+    return "external_url"
+
+
+def _environment_dependency_reason(
+    key: str,
+    service: str,
+    value_hint: dict[str, str | None],
+) -> str:
+    shape = value_hint["value_shape"]
+    if shape in {"arn", "queue_url", "url"}:
+        return (
+            f"Environment key {key} contains a redacted {shape} that appears to target "
+            f"{service}."
+        )
+    return f"Environment key {key} suggests a {service} dependency."
 
 
 def _lambda_non_vpc_network_access(
@@ -1957,6 +2103,24 @@ def _lambda_dependency_edges(
                 "to": dead_letter.get("target_arn"),
                 "relationship": "sends_failed_async_events_to",
                 "target_type": _arn_service(dead_letter.get("target_arn")),
+            }
+        )
+
+    for hint in summary.get("environment_dependency_hints", []):
+        service = hint.get("likely_service")
+        key = hint.get("key")
+        if not service or not key:
+            continue
+        edges.append(
+            {
+                "from": function_name,
+                "to": f"inferred:{service}:{key}",
+                "relationship": "may_depend_on",
+                "target_type": service,
+                "source": "environment_variable",
+                "environment_key": key,
+                "value_shape": hint.get("value_shape"),
+                "confidence": hint.get("confidence"),
             }
         )
 
