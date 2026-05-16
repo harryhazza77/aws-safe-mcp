@@ -203,6 +203,52 @@ def investigate_api_gateway_route(
     }
 
 
+def analyze_api_gateway_authorizer_failures(
+    runtime: AwsRuntime,
+    api_id: str,
+    route_key: str | None = None,
+    api_type: str | None = None,
+    region: str | None = None,
+    max_events: int | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    authorizers = get_api_gateway_authorizer_summary(
+        runtime,
+        api_id=api_id,
+        api_type=api_type,
+        region=resolved_region,
+    )
+    routes = _authorizer_routes_for_analysis(authorizers["routes"], route_key)
+    warnings = list(authorizers.get("warnings", []))
+    authorizers_by_id = {
+        str(item.get("authorizer_id")): item for item in authorizers.get("authorizers", [])
+    }
+    diagnostics = [
+        _authorizer_failure_diagnostic(
+            runtime,
+            resolved_region,
+            str(api_id),
+            route,
+            authorizers_by_id.get(str(route.get("authorizer_id"))),
+            max_events,
+            warnings,
+        )
+        for route in routes
+    ]
+    signals = _authorizer_failure_signals(diagnostics)
+    return {
+        "api_id": api_id,
+        "api_type": authorizers.get("api_type"),
+        "region": resolved_region,
+        "route_key": route_key,
+        "summary": _authorizer_failure_summary(signals),
+        "routes": diagnostics,
+        "signals": signals,
+        "suggested_next_checks": _authorizer_failure_next_checks(signals),
+        "warnings": warnings,
+    }
+
+
 def _list_rest_apis(
     runtime: AwsRuntime,
     region: str,
@@ -593,6 +639,127 @@ def _authorizer_result(
         "routes": routes,
         "warnings": warnings,
     }
+
+
+def _authorizer_routes_for_analysis(
+    routes: list[dict[str, Any]],
+    route_key: str | None,
+) -> list[dict[str, Any]]:
+    if route_key:
+        matched = [route for route in routes if route.get("route_key") == route_key]
+        if not matched:
+            raise ToolInputError("route was not found for the supplied route_key")
+        return matched
+    return routes
+
+
+def _authorizer_failure_diagnostic(
+    runtime: AwsRuntime,
+    region: str,
+    api_id: str,
+    route: dict[str, Any],
+    authorizer: dict[str, Any] | None,
+    max_events: int | None,
+    warnings: list[str],
+) -> dict[str, Any]:
+    lambda_arn = authorizer.get("lambda_function_arn") if authorizer else None
+    lambda_policy = (
+        _lambda_resource_policy_summary(runtime, region, api_id, str(lambda_arn))
+        if lambda_arn
+        else None
+    )
+    lambda_context = (
+        _route_lambda_context(runtime, region, str(lambda_arn), max_events, warnings)
+        if lambda_arn
+        else None
+    )
+    risks = _authorizer_route_risks(route, authorizer, lambda_policy, lambda_context)
+    return {
+        "route_key": route.get("route_key"),
+        "authorization_type": route.get("authorization_type"),
+        "authorizer_id": route.get("authorizer_id"),
+        "authorizer_name": route.get("authorizer_name"),
+        "authorizer": None
+        if not authorizer
+        else {
+            "type": authorizer.get("type"),
+            "identity_sources": authorizer.get("identity_sources", []),
+            "lambda_function_arn": lambda_arn,
+            "ttl_seconds": authorizer.get("ttl_seconds"),
+        },
+        "lambda_permission": lambda_policy,
+        "lambda": lambda_context,
+        "risks": risks,
+    }
+
+
+def _authorizer_route_risks(
+    route: dict[str, Any],
+    authorizer: dict[str, Any] | None,
+    lambda_policy: dict[str, Any] | None,
+    lambda_context: dict[str, Any] | None,
+) -> list[str]:
+    risks: list[str] = []
+    if route.get("authorization_type") in {None, "NONE"}:
+        return risks
+    if not route.get("authorizer_id"):
+        risks.append("route_auth_without_authorizer")
+    if route.get("authorizer_id") and not authorizer:
+        risks.append("authorizer_not_found")
+    if authorizer and not authorizer.get("identity_sources"):
+        risks.append("missing_identity_sources")
+    if authorizer and authorizer.get("lambda_function_arn"):
+        if lambda_policy and lambda_policy.get("allows_apigateway_invoke") is False:
+            risks.append("lambda_authorizer_policy_denies_apigateway")
+        if lambda_policy and lambda_policy.get("allows_apigateway_invoke") is None:
+            risks.append("lambda_authorizer_policy_unknown")
+        if lambda_context and lambda_context.get("recent_error_count", 0) > 0:
+            risks.append("recent_authorizer_lambda_errors")
+        summary = lambda_context.get("summary") if lambda_context else None
+        if isinstance(summary, dict) and summary.get("state") not in {None, "Active"}:
+            risks.append("authorizer_lambda_not_active")
+    if authorizer and authorizer.get("ttl_seconds") == 0:
+        risks.append("authorizer_cache_disabled")
+    return risks
+
+
+def _authorizer_failure_signals(diagnostics: list[dict[str, Any]]) -> dict[str, Any]:
+    risks = [risk for diagnostic in diagnostics for risk in diagnostic["risks"]]
+    return {
+        "route_count": len(diagnostics),
+        "protected_route_count": sum(
+            1
+            for diagnostic in diagnostics
+            if diagnostic.get("authorization_type") not in {None, "NONE"}
+        ),
+        "risk_count": len(risks),
+        "risks": sorted(set(risks)),
+    }
+
+
+def _authorizer_failure_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "auth_failure_risks" if signals["risk_count"] else "no_auth_failure_risks",
+        "route_count": signals["route_count"],
+        "protected_route_count": signals["protected_route_count"],
+        "risk_count": signals["risk_count"],
+        "risks": signals["risks"],
+    }
+
+
+def _authorizer_failure_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if "lambda_authorizer_policy_denies_apigateway" in signals["risks"]:
+        checks.append("Fix Lambda authorizer resource policy for apigateway.amazonaws.com.")
+    if "missing_identity_sources" in signals["risks"]:
+        checks.append("Check authorizer identity sources for expected headers or query strings.")
+    if "recent_authorizer_lambda_errors" in signals["risks"]:
+        checks.append("Inspect recent authorizer Lambda errors for 401/403 causes.")
+    if "authorizer_cache_disabled" in signals["risks"]:
+        checks.append("Confirm disabled authorizer cache is intentional.")
+    if not checks:
+        checks.append("No static authorizer failure risk found.")
+    return checks
 
 
 def _v2_api_dependencies(

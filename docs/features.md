@@ -171,6 +171,9 @@ Related tools:
   to allow API Gateway invoke.
 - Diagnose one route with integration details, Lambda invoke permission, Lambda
   configuration, and recent Lambda error signals.
+- Analyze API Gateway authorizer 401/403 risks from route auth config,
+  authorizer type, identity sources, Lambda authorizer policy, TTL/cache, and
+  recent authorizer Lambda errors without invoking the API.
 - Report explicit API Gateway-to-Lambda callability signals and blockers from
   integration availability, Lambda resource policy, Lambda state/update status,
   timeout, and recent error count.
@@ -181,6 +184,7 @@ Related tools:
 - `list_api_gateways`
 - `get_api_gateway_summary`
 - `get_api_gateway_authorizer_summary`
+- `analyze_api_gateway_authorizer_failures`
 - `explain_api_gateway_dependencies`
 - `investigate_api_gateway_route`
 

@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.tools.apigateway import (
+    analyze_api_gateway_authorizer_failures,
     explain_api_gateway_dependencies,
     get_api_gateway_authorizer_summary,
     get_api_gateway_summary,
@@ -293,6 +294,29 @@ def test_get_api_gateway_authorizer_summary_returns_rest_routes() -> None:
     assert result["summary"]["attached_route_count"] == 1
     assert result["routes"][0]["route_key"] == "GET /orders"
     assert result["routes"][0]["authorizer_name"] == "orders-auth"
+
+
+def test_analyze_api_gateway_authorizer_failures_reports_lambda_error_risks() -> None:
+    result = analyze_api_gateway_authorizer_failures(
+        FakeRuntime(),
+        "http1",
+        route_key="GET /orders",
+        api_type="http",
+        max_events=5,
+    )
+
+    assert result["summary"] == {
+        "status": "auth_failure_risks",
+        "route_count": 1,
+        "protected_route_count": 1,
+        "risk_count": 1,
+        "risks": ["recent_authorizer_lambda_errors"],
+    }
+    route = result["routes"][0]
+    assert route["authorizer"]["identity_sources"] == ["$request.header.Authorization"]
+    assert route["lambda_permission"]["allows_apigateway_invoke"] is True
+    assert route["lambda"]["recent_error_count"] == 1
+    assert any("authorizer Lambda errors" in check for check in result["suggested_next_checks"])
 
 
 def test_explain_api_gateway_dependencies_returns_rest_routes_and_policy() -> None:

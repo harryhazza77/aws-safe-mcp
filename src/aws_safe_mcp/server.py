@@ -5,6 +5,9 @@ from mcp.server.fastmcp import FastMCP
 from aws_safe_mcp.audit import AuditLogger
 from aws_safe_mcp.auth import AwsRuntime
 from aws_safe_mcp.tools.apigateway import (
+    analyze_api_gateway_authorizer_failures as analyze_api_gateway_authorizer_failures_tool,
+)
+from aws_safe_mcp.tools.apigateway import (
     explain_api_gateway_dependencies as explain_api_gateway_dependencies_tool,
 )
 from aws_safe_mcp.tools.apigateway import (
@@ -1027,6 +1030,25 @@ def _register_api_gateway_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRu
             api_id=api_id,
             api_type=api_type,
             region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("analyze_api_gateway_authorizer_failures")
+    def analyze_api_gateway_authorizer_failures(
+        api_id: str,
+        route_key: str | None = None,
+        api_type: str | None = None,
+        region: str | None = None,
+        max_events: int | None = None,
+    ) -> dict[str, object]:
+        """Analyze API Gateway authorizer 401/403 risks without invoking the API."""
+        return analyze_api_gateway_authorizer_failures_tool(
+            runtime,
+            api_id=api_id,
+            route_key=route_key,
+            api_type=api_type,
+            region=region,
+            max_events=max_events,
         )
 
     @mcp.tool()

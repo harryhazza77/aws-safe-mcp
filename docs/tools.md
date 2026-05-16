@@ -723,6 +723,21 @@ Inputs:
 - `api_type` optional, one of `auto`, `rest`, `http`, or `websocket`
 - `region` optional
 
+### `analyze_api_gateway_authorizer_failures`
+
+Analyzes API Gateway authorizer 401/403 risks without invoking the API. It
+checks route authorization config, authorizer type, identity sources, Lambda
+authorizer resource policy, TTL/cache setting, and recent authorizer Lambda
+errors. It does not return raw Lambda policies or request payloads.
+
+Inputs:
+
+- `api_id` required
+- `route_key` optional
+- `api_type` optional, one of `auto`, `rest`, `http`, or `websocket`
+- `region` optional
+- `max_events` optional
+
 ### `explain_api_gateway_dependencies`
 
 Maps one API Gateway API into route and integration dependencies without
