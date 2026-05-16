@@ -382,6 +382,18 @@ Inputs:
 - `execution_arn` required
 - `region` optional
 
+### `audit_step_function_retry_catch_safety`
+
+Audits one state machine's task retry/catch coverage without returning the full
+ASL definition. It summarizes per-task retry/catch counts, terminal Fail
+states, external integrations missing catches, and high-risk no-retry tasks. It
+does not return execution payloads or secret values.
+
+Inputs:
+
+- `state_machine_arn` required
+- `region` optional
+
 ### `explain_step_function_dependencies`
 
 Maps one state machine into a compact dependency graph. It parses ASL, extracts

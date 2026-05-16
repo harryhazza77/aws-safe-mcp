@@ -165,6 +165,9 @@ from aws_safe_mcp.tools.sqs import (
     list_sqs_queues as list_sqs_queues_tool,
 )
 from aws_safe_mcp.tools.stepfunctions import (
+    audit_step_function_retry_catch_safety as audit_step_function_retry_catch_safety_tool,
+)
+from aws_safe_mcp.tools.stepfunctions import (
     explain_step_function_dependencies as explain_step_function_dependencies_tool,
 )
 from aws_safe_mcp.tools.stepfunctions import (
@@ -612,6 +615,19 @@ def _register_step_functions_tools(mcp: FastMCP, audit: AuditLogger, runtime: Aw
         return investigate_step_function_failure_tool(
             runtime,
             execution_arn=execution_arn,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("audit_step_function_retry_catch_safety")
+    def audit_step_function_retry_catch_safety(
+        state_machine_arn: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Audit Step Functions task retry/catch coverage without returning definitions."""
+        return audit_step_function_retry_catch_safety_tool(
+            runtime,
+            state_machine_arn=state_machine_arn,
             region=region,
         )
 

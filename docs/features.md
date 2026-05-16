@@ -152,12 +152,16 @@ Related tools:
 - Summarize execution role metadata and inferred permission checks.
 - Report task-level permission proof with per-state integration, target,
   retry/catch counts, checked actions, and blocked states.
+- Audit Step Functions retry/catch safety per task, terminal Fail states, and
+  external integrations missing catches without returning full definitions,
+  execution payloads, or secret values.
 
 Related tools:
 
 - `list_step_functions`
 - `get_step_function_execution_summary`
 - `investigate_step_function_failure`
+- `audit_step_function_retry_catch_safety`
 - `explain_step_function_dependencies`
 
 ## API Gateway Investigation

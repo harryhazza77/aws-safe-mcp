@@ -11,6 +11,7 @@ from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.stepfunctions import (
     _step_function_permission_hints,
+    audit_step_function_retry_catch_safety,
     explain_step_function_dependencies,
     get_step_function_execution_summary,
     investigate_step_function_failure,
@@ -421,6 +422,40 @@ def test_explain_step_function_dependencies_maps_tasks_and_permissions() -> None
         == result["permission_checks"]["checked_count"]
     )
     assert result["warnings"] == []
+
+
+def test_audit_step_function_retry_catch_safety_flags_uncovered_tasks() -> None:
+    result = audit_step_function_retry_catch_safety(
+        FakeRuntime(),
+        "arn:aws:states:eu-west-2:123456789012:stateMachine:dev-order-flow",
+    )
+
+    assert result["summary"] == {
+        "status": "retry_catch_gaps",
+        "task_count": 6,
+        "risk_count": 15,
+        "risks": [
+            "external_integration_without_catch",
+            "task_without_catch",
+            "task_without_retry",
+        ],
+    }
+    assert result["signals"]["tasks_without_retry"] == [
+        "Notify",
+        "SendQueueMessage",
+        "PutEvent",
+        "PutItem",
+        "StartChild",
+    ]
+    assert result["signals"]["external_integrations_without_catch"] == [
+        "Notify",
+        "SendQueueMessage",
+        "PutEvent",
+        "PutItem",
+        "StartChild",
+    ]
+    assert result["task_audits"][0]["retry_count"] == 1
+    assert "definition" not in result
 
 
 def test_explain_step_function_dependencies_can_skip_permission_checks() -> None:

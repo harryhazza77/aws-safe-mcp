@@ -83,6 +83,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "list_step_functions",
         "get_step_function_execution_summary",
         "investigate_step_function_failure",
+        "audit_step_function_retry_catch_safety",
         "explain_step_function_dependencies",
         "list_s3_buckets",
         "get_s3_bucket_summary",

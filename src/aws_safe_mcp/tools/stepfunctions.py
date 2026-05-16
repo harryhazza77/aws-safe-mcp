@@ -219,6 +219,38 @@ def explain_step_function_dependencies(
     }
 
 
+def audit_step_function_retry_catch_safety(
+    runtime: AwsRuntime,
+    state_machine_arn: str,
+    region: str | None = None,
+) -> dict[str, Any]:
+    dependencies = explain_step_function_dependencies(
+        runtime,
+        state_machine_arn=state_machine_arn,
+        region=region,
+        include_permission_checks=False,
+    )
+    states = dependencies.get("nodes", {}).get("states", [])
+    task_audits = [_step_function_task_retry_catch_audit(state) for state in states]
+    terminal_failures = [
+        {"name": state.get("name"), "type": state.get("type")}
+        for state in states
+        if state.get("type") == "Fail"
+    ]
+    signals = _step_function_retry_catch_signals(task_audits, terminal_failures)
+    return {
+        "state_machine_name": dependencies["state_machine_name"],
+        "state_machine_arn": dependencies["state_machine_arn"],
+        "region": dependencies["region"],
+        "summary": _step_function_retry_catch_summary(signals),
+        "task_audits": task_audits,
+        "terminal_failure_states": terminal_failures,
+        "signals": signals,
+        "suggested_next_checks": _step_function_retry_catch_next_checks(signals),
+        "warnings": dependencies.get("warnings", []),
+    }
+
+
 def _state_machine_list_item(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": item.get("name"),
@@ -323,6 +355,101 @@ def _retry_catch_summary(value: Any) -> list[dict[str, Any]]:
             }
         )
     return summary
+
+
+def _step_function_task_retry_catch_audit(state: dict[str, Any]) -> dict[str, Any]:
+    if state.get("type") != "Task":
+        return {
+            "name": state.get("name"),
+            "type": state.get("type"),
+            "included": False,
+        }
+    retry = state.get("retry") or []
+    catch = state.get("catch") or []
+    risks = []
+    integration = state.get("integration")
+    if not retry:
+        risks.append("task_without_retry")
+    if not catch:
+        risks.append("task_without_catch")
+    if integration and integration not in {"unknown"} and not catch:
+        risks.append("external_integration_without_catch")
+    if retry and not _retry_handles_transient_errors(retry):
+        risks.append("retry_without_transient_errors")
+    return {
+        "name": state.get("name"),
+        "type": state.get("type"),
+        "integration": integration,
+        "target_arn": state.get("target_arn"),
+        "retry_count": len(retry),
+        "catch_count": len(catch),
+        "retry_error_sets": [item.get("error_equals", []) for item in retry],
+        "catch_error_sets": [item.get("error_equals", []) for item in catch],
+        "risks": risks,
+        "included": True,
+    }
+
+
+def _retry_handles_transient_errors(retry: list[dict[str, Any]]) -> bool:
+    transient = {
+        "States.ALL",
+        "States.TaskFailed",
+        "Lambda.ServiceException",
+        "Lambda.AWSLambdaException",
+        "Lambda.SdkClientException",
+        "ThrottlingException",
+    }
+    return any(
+        transient.intersection({str(error) for error in item.get("error_equals", [])})
+        for item in retry
+    )
+
+
+def _step_function_retry_catch_signals(
+    task_audits: list[dict[str, Any]],
+    terminal_failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    included = [item for item in task_audits if item.get("included")]
+    risks = [risk for item in included for risk in item.get("risks", [])]
+    return {
+        "task_count": len(included),
+        "terminal_failure_state_count": len(terminal_failures),
+        "tasks_without_retry": [
+            item["name"] for item in included if "task_without_retry" in item["risks"]
+        ],
+        "tasks_without_catch": [
+            item["name"] for item in included if "task_without_catch" in item["risks"]
+        ],
+        "external_integrations_without_catch": [
+            item["name"]
+            for item in included
+            if "external_integration_without_catch" in item["risks"]
+        ],
+        "risk_count": len(risks),
+        "risks": sorted(set(risks)),
+    }
+
+
+def _step_function_retry_catch_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "retry_catch_gaps" if signals["risk_count"] else "retry_catch_covered",
+        "task_count": signals["task_count"],
+        "risk_count": signals["risk_count"],
+        "risks": signals["risks"],
+    }
+
+
+def _step_function_retry_catch_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if signals["tasks_without_retry"]:
+        checks.append("Review retry coverage for high-risk task states.")
+    if signals["tasks_without_catch"]:
+        checks.append("Add Catch handlers where task failures should be controlled.")
+    if signals["terminal_failure_state_count"]:
+        checks.append("Confirm terminal Fail states are expected incident boundaries.")
+    if not checks:
+        checks.append("No Step Functions retry/catch coverage gap found.")
+    return checks
 
 
 def _step_function_flow_summary(
