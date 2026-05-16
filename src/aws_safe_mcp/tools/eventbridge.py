@@ -240,6 +240,7 @@ def investigate_eventbridge_rule_delivery(
     )
     warnings = [*dependencies.get("warnings", []), *metrics.get("warnings", [])]
     signals = _delivery_signals(dependencies, metrics)
+    target_diagnostics = _delivery_target_diagnostics(dependencies)
 
     return {
         "rule_name": dependencies["rule_name"],
@@ -255,6 +256,8 @@ def investigate_eventbridge_rule_delivery(
         "metrics": metrics,
         "permission_checks": dependencies["permission_checks"],
         "signals": signals,
+        "signal_groups": _delivery_signal_groups(signals),
+        "target_diagnostics": target_diagnostics,
         "suggested_next_checks": _delivery_suggested_next_checks(signals),
         "warnings": warnings,
     }
@@ -1661,6 +1664,61 @@ def _delivery_diagnostic_summary(dependencies: dict[str, Any], signals: dict[str
             f"EventBridge rule {rule_name} matched events and no delivery failures were detected."
         )
     return f"EventBridge rule {rule_name} has no obvious delivery failures in the selected window."
+
+
+def _delivery_signal_groups(signals: dict[str, Any]) -> dict[str, list[str]]:
+    configuration = []
+    permission = []
+    metrics = []
+    if signals["rule_disabled"]:
+        configuration.append("rule_disabled")
+    if not signals["has_targets"]:
+        configuration.append("no_targets")
+    if signals["permission_denied_count"]:
+        permission.append("permission_not_found")
+    if signals["permission_unknown_count"]:
+        permission.append("permission_unknown")
+    if signals["has_failed_invocations"]:
+        metrics.append("failed_invocations")
+    if signals["has_dlq_activity"]:
+        metrics.append("dlq_activity")
+    if signals["dlq_visible_messages"]:
+        metrics.append("visible_dlq_messages")
+    return {
+        "configuration": configuration,
+        "permission": permission,
+        "metrics": metrics,
+    }
+
+
+def _delivery_target_diagnostics(dependencies: dict[str, Any]) -> list[dict[str, Any]]:
+    checks_by_target = {
+        str(check.get("target_id")): check
+        for check in dependencies.get("permission_checks", {}).get("checks", [])
+        if check.get("target_id")
+    }
+    dlqs_by_target = {
+        str(dlq.get("target_id")): dlq
+        for dlq in dependencies.get("nodes", {}).get("dead_letter_queues", [])
+        if dlq.get("target_id")
+    }
+    diagnostics = []
+    for target in dependencies.get("nodes", {}).get("targets", []):
+        target_id = str(target.get("id"))
+        check = checks_by_target.get(target_id)
+        dlq = dlqs_by_target.get(target_id)
+        diagnostics.append(
+            {
+                "target_id": target_id,
+                "target_type": target.get("target_type"),
+                "arn": target.get("arn"),
+                "retry_policy": target.get("retry_policy"),
+                "dead_letter_queue": dlq,
+                "permission_decision": check.get("decision") if check else None,
+                "permission_allowed": check.get("allowed") if check else None,
+            }
+        )
+    return diagnostics
 
 
 def _delivery_suggested_next_checks(signals: dict[str, Any]) -> list[str]:

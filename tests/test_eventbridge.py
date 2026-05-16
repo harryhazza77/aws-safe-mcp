@@ -580,6 +580,19 @@ def test_investigate_eventbridge_rule_delivery_combines_metrics_and_dlq_state() 
     assert result["metrics"]["available"] is True
     assert result["signals"]["has_failed_invocations"] is True
     assert result["signals"]["dlq_visible_messages"] == 3
+    assert result["signal_groups"]["metrics"] == [
+        "failed_invocations",
+        "visible_dlq_messages",
+    ]
+    lambda_target = next(
+        item for item in result["target_diagnostics"] if item["target_id"] == "lambda"
+    )
+    assert lambda_target["retry_policy"] == {
+        "MaximumRetryAttempts": 2,
+        "MaximumEventAgeInSeconds": 3600,
+    }
+    assert lambda_target["dead_letter_queue"]["approximate_number_of_messages"] == 3
+    assert lambda_target["permission_decision"] == "allowed"
     assert "failed delivery" in result["diagnostic_summary"]
     assert any("DLQ" in check for check in result["suggested_next_checks"])
 

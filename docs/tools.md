@@ -453,7 +453,8 @@ Inputs:
 
 Diagnoses one EventBridge rule using configuration, target permissions,
 CloudWatch `AWS/Events` metrics, and SQS DLQ metadata where available. It does
-not read DLQ messages.
+not read DLQ messages. Findings are grouped into configuration, permission, and
+metric signals and include target-level retry/DLQ context.
 
 Inputs:
 

@@ -94,6 +94,8 @@ Related tools:
 - Map a rule to targets, DLQs, target roles, and permission checks.
 - Diagnose rule delivery using configuration, target permissions, CloudWatch
   metrics, and SQS DLQ metadata where visible.
+- Separate delivery findings into configuration, permission, and metric signal
+  groups with target-level retry/DLQ context.
 - Start from a workload name, event source, detail type, or event-pattern path
   and stitch EventBridge, Step Functions, Lambda dependencies, downstream
   hints, and safe resource candidate matches into one flow view.
