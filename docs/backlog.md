@@ -23,18 +23,7 @@ Avoid features that:
 
 ## Feature Candidates
 
-### 1. ECS Task And Service Summary
-
-Add bounded ECS cluster/service/task definition summaries, focusing on desired
-count, deployment state, task role, execution role, containers, log groups, and
-load balancer wiring.
-
-- Value: expands beyond serverless while preserving safe metadata inspection.
-- Fixture: minimal ECS service if emulator support is sufficient.
-- Emulator: MiniStack likely.
-- Acceptance: no container env values or secrets are returned.
-
-### 2. Cross-Service Incident Brief
+### 1. Cross-Service Incident Brief
 
 Add an incident-brief tool that accepts a resource name fragment and produces a
 compact investigation bundle from existing safe tools: matching resources,

@@ -30,6 +30,9 @@ from aws_safe_mcp.tools.dynamodb import (
     dynamodb_table_summary as dynamodb_table_summary_tool,
 )
 from aws_safe_mcp.tools.dynamodb import list_dynamodb_tables as list_dynamodb_tables_tool
+from aws_safe_mcp.tools.ecs import get_ecs_service_summary as get_ecs_service_summary_tool
+from aws_safe_mcp.tools.ecs import list_ecs_clusters as list_ecs_clusters_tool
+from aws_safe_mcp.tools.ecs import list_ecs_services as list_ecs_services_tool
 from aws_safe_mcp.tools.eventbridge import (
     explain_event_driven_flow as explain_event_driven_flow_tool,
 )
@@ -122,6 +125,7 @@ def create_server(runtime: AwsRuntime) -> FastMCP:
     _register_sqs_tools(mcp, audit, runtime)
     _register_sns_tools(mcp, audit, runtime)
     _register_dynamodb_tools(mcp, audit, runtime)
+    _register_ecs_tools(mcp, audit, runtime)
     _register_cloudwatch_tools(mcp, audit, runtime)
     _register_api_gateway_tools(mcp, audit, runtime)
     _register_eventbridge_tools(mcp, audit, runtime)
@@ -553,6 +557,47 @@ def _register_sns_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
             region=region,
             include_permission_checks=include_permission_checks,
             max_permission_checks=max_permission_checks,
+        )
+
+
+def _register_ecs_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -> None:
+    @mcp.tool()
+    @audit.tool("list_ecs_clusters")
+    def list_ecs_clusters(
+        region: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """List ECS clusters."""
+        return list_ecs_clusters_tool(runtime, region=region, max_results=max_results)
+
+    @mcp.tool()
+    @audit.tool("list_ecs_services")
+    def list_ecs_services(
+        cluster: str,
+        region: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """List ECS services in one cluster."""
+        return list_ecs_services_tool(
+            runtime,
+            cluster=cluster,
+            region=region,
+            max_results=max_results,
+        )
+
+    @mcp.tool()
+    @audit.tool("get_ecs_service_summary")
+    def get_ecs_service_summary(
+        cluster: str,
+        service: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Summarize one ECS service and its task definition safely."""
+        return get_ecs_service_summary_tool(
+            runtime,
+            cluster=cluster,
+            service=service,
+            region=region,
         )
 
 

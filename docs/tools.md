@@ -299,6 +299,39 @@ Inputs:
 - `table_name` required
 - `region` optional
 
+## ECS
+
+### `list_ecs_clusters`
+
+Lists ECS clusters by ARN and name.
+
+Inputs:
+
+- `region` optional
+- `max_results` optional
+
+### `list_ecs_services`
+
+Lists ECS services in one cluster by ARN and name.
+
+Inputs:
+
+- `cluster` required
+- `region` optional
+- `max_results` optional
+
+### `get_ecs_service_summary`
+
+Summarizes one ECS service and its task definition with desired/running counts,
+deployment state, task and execution roles, containers, log groups, and load
+balancer wiring. Container environment values and secret values are not returned.
+
+Inputs:
+
+- `cluster` required
+- `service` required
+- `region` optional
+
 ## SQS
 
 ### `list_sqs_queues`

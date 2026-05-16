@@ -43,6 +43,19 @@ Related tools:
 - `list_kms_keys`
 - `get_kms_key_summary`
 
+## ECS Inspection
+
+- List ECS clusters and services with bounded metadata.
+- Summarize an ECS service and task definition with desired/running counts,
+  deployment state, task role, execution role, containers, log groups, and load
+  balancer wiring without returning container environment or secret values.
+
+Related tools:
+
+- `list_ecs_clusters`
+- `list_ecs_services`
+- `get_ecs_service_summary`
+
 ## Lambda Investigation
 
 - List visible Lambda functions with concise configuration summaries.
