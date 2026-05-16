@@ -15,6 +15,7 @@ from aws_safe_mcp.tools.resource_search import (
     build_log_signal_correlation_timeline,
     diagnose_region_partition_mismatches,
     export_application_dependency_graph,
+    generate_application_health_narrative,
     get_cross_service_incident_brief,
     get_risk_scored_dependency_health_summary,
     plan_end_to_end_transaction_trace,
@@ -435,6 +436,53 @@ def test_audit_multi_region_drift_failover_readiness_flags_missing_peer(
     assert result["summary"]["missing_peer_count"] == 1
     assert result["raw_policy_documents_returned"] is False
     assert result["payloads_returned"] is False
+
+
+def test_generate_application_health_narrative_combines_existing_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        resource_search,
+        "export_application_dependency_graph",
+        lambda *_args, **_kwargs: {
+            "summary": {"node_count": 1, "edge_count": 1, "unresolved_count": 0},
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr(
+        resource_search,
+        "get_risk_scored_dependency_health_summary",
+        lambda *_args, **_kwargs: {
+            "average_risk_score": 50,
+            "resources": [
+                {
+                    "service": "lambda",
+                    "name": "dev-api",
+                    "score": 50,
+                    "risks": ["callability_not_proven"],
+                }
+            ],
+            "summary": {"status": "risks_detected"},
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr(
+        resource_search,
+        "build_log_signal_correlation_timeline",
+        lambda *_args, **_kwargs: {
+            "timeline": [{"source": "cloudwatch_alarm", "name": "dev-errors"}],
+            "summary": {"symptom_count": 1, "likely_first_failure_point": "cloudwatch"},
+            "warnings": [],
+        },
+    )
+
+    result = generate_application_health_narrative(FakeRuntime(), "dev")
+
+    assert result["ranked_risks"][0]["risk"] == "recent_failure_signals"
+    assert result["follow_up_tools"][0] == "build_log_signal_correlation_timeline"
+    assert result["raw_policy_documents_returned"] is False
+    assert result["payloads_returned"] is False
+    assert result["secret_values_returned"] is False
 
 
 def test_get_risk_scored_dependency_health_summary_scores_resources(

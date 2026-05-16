@@ -30,12 +30,7 @@ current public tool surface in `src/aws_safe_mcp/server.py` and
 `src/aws_safe_mcp/tools/*`; scopes focus on new diagnostic value beyond existing
 single-resource summaries, dependency graphs, and permission checks.
 
-1. **Application health narrative generator** _(XLarge)_
-    - Combine dependency graph, risk scores, alarm gaps, retry topology,
-      callability proofs, network reachability, and recent failure signals into
-      a concise incident-ready narrative.
-    - Output executive summary, ranked risks, evidence, and exact follow-up
-      tools without returning raw policy documents, payloads, or secret values.
+All planned feature candidates have been implemented.
 
 ## Suggested Order
 

@@ -1089,3 +1089,16 @@ Inputs:
 - `application_prefix` required
 - `regions` required
 - `max_matches` optional
+
+### `generate_application_health_narrative`
+
+Combines dependency graph, risk score, and recent signal timeline diagnostics
+into an incident-ready narrative. It returns an executive summary, ranked
+risks, supporting evidence, and follow-up tools without returning raw policy
+documents, payloads, or secret values.
+
+Inputs:
+
+- `application_prefix` required
+- `region` optional
+- `max_matches` optional

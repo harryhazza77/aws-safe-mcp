@@ -396,6 +396,57 @@ def audit_multi_region_drift_failover_readiness(
     }
 
 
+def generate_application_health_narrative(
+    runtime: AwsRuntime,
+    application_prefix: str,
+    region: str | None = None,
+    max_matches: int | None = None,
+) -> dict[str, Any]:
+    prefix = application_prefix.strip()
+    if not prefix:
+        raise ToolInputError("application_prefix is required")
+    graph = export_application_dependency_graph(
+        runtime,
+        prefix,
+        region=region,
+        max_matches=max_matches,
+    )
+    risks = get_risk_scored_dependency_health_summary(
+        runtime,
+        prefix,
+        region=region,
+        max_matches=max_matches,
+    )
+    timeline = build_log_signal_correlation_timeline(
+        runtime,
+        prefix,
+        region=region,
+        max_matches=max_matches,
+    )
+    ranked_risks = _application_ranked_risks(graph, risks, timeline)
+    warnings = [
+        *graph.get("warnings", []),
+        *risks.get("warnings", []),
+        *timeline.get("warnings", []),
+    ]
+    return {
+        "application_prefix": prefix,
+        "region": region or runtime.region,
+        "executive_summary": _application_health_summary(graph, risks, timeline, ranked_risks),
+        "ranked_risks": ranked_risks,
+        "evidence": {
+            "graph_summary": graph.get("summary"),
+            "risk_summary": risks.get("summary"),
+            "timeline_summary": timeline.get("summary"),
+        },
+        "follow_up_tools": _application_health_follow_up_tools(ranked_risks),
+        "raw_policy_documents_returned": False,
+        "payloads_returned": False,
+        "secret_values_returned": False,
+        "warnings": warnings,
+    }
+
+
 def diagnose_region_partition_mismatches(
     runtime: AwsRuntime,
     resource_refs: list[str],
@@ -871,6 +922,96 @@ def _multi_region_drift_summary(findings: list[dict[str, Any]]) -> dict[str, Any
             1 for finding in findings if finding["status"] == "missing_peer"
         ),
     }
+
+
+def _application_ranked_risks(
+    graph: dict[str, Any],
+    risks: dict[str, Any],
+    timeline: dict[str, Any],
+) -> list[dict[str, Any]]:
+    ranked: list[dict[str, Any]] = []
+    for item in risks.get("resources", []):
+        if item.get("score", 0) > 0:
+            ranked.append(
+                {
+                    "rank": 0,
+                    "risk": "resource_dependency_health",
+                    "resource": item.get("name"),
+                    "service": item.get("service"),
+                    "score": item.get("score"),
+                    "evidence": item.get("risks", []),
+                }
+            )
+    if graph.get("summary", {}).get("unresolved_count", 0):
+        ranked.append(
+            {
+                "rank": 0,
+                "risk": "unresolved_dependency_hints",
+                "resource": None,
+                "service": "cross_service",
+                "score": 75,
+                "evidence": graph.get("unresolved_hints", []),
+            }
+        )
+    if timeline.get("summary", {}).get("symptom_count", 0):
+        ranked.append(
+            {
+                "rank": 0,
+                "risk": "recent_failure_signals",
+                "resource": timeline.get("summary", {}).get("likely_first_failure_point"),
+                "service": "observability",
+                "score": 90,
+                "evidence": timeline.get("timeline", [])[:3],
+            }
+        )
+    ranked.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
+    for index, item in enumerate(ranked, start=1):
+        item["rank"] = index
+    return ranked
+
+
+def _application_health_summary(
+    graph: dict[str, Any],
+    risks: dict[str, Any],
+    timeline: dict[str, Any],
+    ranked_risks: list[dict[str, Any]],
+) -> str:
+    node_count = graph.get("summary", {}).get("node_count", 0)
+    edge_count = graph.get("summary", {}).get("edge_count", 0)
+    average = risks.get("average_risk_score", 0)
+    symptoms = timeline.get("summary", {}).get("symptom_count", 0)
+    if ranked_risks:
+        top = ranked_risks[0]["risk"]
+        return (
+            f"Found {node_count} resources and {edge_count} dependency edges. "
+            f"Average risk score is {average}; top concern is {top}. "
+            f"Recent correlated symptom count is {symptoms}."
+        )
+    return (
+        f"Found {node_count} resources and {edge_count} dependency edges with no "
+        "ranked risks from the bounded checks."
+    )
+
+
+def _application_health_follow_up_tools(ranked_risks: list[dict[str, Any]]) -> list[str]:
+    tools = []
+    for risk in ranked_risks[:5]:
+        service = risk.get("service")
+        if risk.get("risk") == "recent_failure_signals":
+            tools.append("build_log_signal_correlation_timeline")
+        elif service == "lambda":
+            tools.append("explain_lambda_dependencies")
+        elif service == "sqs":
+            tools.append("investigate_sqs_backlog_stall")
+        elif service == "eventbridge":
+            tools.append("audit_eventbridge_target_retry_dlq_safety")
+        elif service == "apigateway":
+            tools.append("investigate_api_gateway_route")
+        else:
+            tools.append("get_cross_service_incident_brief")
+    if not tools:
+        tools.append("export_application_dependency_graph")
+    return list(dict.fromkeys(tools))
 
 
 def _selected_services(services: list[str] | None) -> list[str]:

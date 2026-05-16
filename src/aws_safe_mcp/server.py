@@ -145,6 +145,9 @@ from aws_safe_mcp.tools.resource_search import (
     export_application_dependency_graph as export_application_dependency_graph_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
+    generate_application_health_narrative as generate_application_health_narrative_tool,
+)
+from aws_safe_mcp.tools.resource_search import (
     get_cross_service_incident_brief as get_cross_service_incident_brief_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
@@ -1491,5 +1494,20 @@ def _register_search_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
             runtime,
             application_prefix=application_prefix,
             regions=regions,
+            max_matches=max_matches,
+        )
+
+    @mcp.tool()
+    @audit.tool("generate_application_health_narrative")
+    def generate_application_health_narrative(
+        application_prefix: str,
+        region: str | None = None,
+        max_matches: int | None = None,
+    ) -> dict[str, object]:
+        """Generate an incident-ready application health narrative."""
+        return generate_application_health_narrative_tool(
+            runtime,
+            application_prefix=application_prefix,
+            region=region,
             max_matches=max_matches,
         )

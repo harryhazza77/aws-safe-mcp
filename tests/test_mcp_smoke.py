@@ -136,6 +136,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "run_first_blocked_edge_incident",
         "analyze_resource_policy_condition_mismatches",
         "audit_multi_region_drift_failover_readiness",
+        "generate_application_health_narrative",
     }
     assert status_result["authenticated"] is True
     assert status_result["principal_type"] == "assumed_role"

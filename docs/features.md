@@ -340,6 +340,8 @@ Related tools:
   overreach, missing source constraints, and source ARN/account mismatches.
 - Audit multi-region drift and failover readiness by comparing discovered
   application resources for missing peers and region-encoded naming drift.
+- Generate an incident-ready application health narrative from dependency
+  graph, risk score, and recent signal timeline evidence.
 - Produce a risk-scored dependency health summary for an application prefix
   using discovered resources and service-specific follow-up risks.
 
@@ -356,6 +358,7 @@ Related tools:
 - `run_first_blocked_edge_incident`
 - `analyze_resource_policy_condition_mismatches`
 - `audit_multi_region_drift_failover_readiness`
+- `generate_application_health_narrative`
 
 ## Local Emulator Workflows
 
