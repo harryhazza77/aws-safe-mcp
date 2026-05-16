@@ -23,20 +23,7 @@ Avoid features that:
 
 ## Feature Candidates
 
-### 1. KMS Key Metadata Summary
-
-Add KMS key inventory/summary for key state, usage, rotation, aliases, and
-policy availability without decrypting or generating data keys.
-
-- Value: encryption configuration appears across S3, SQS, SNS, Lambda, and
-  logs.
-- Existing coverage: downstream hints can list KMS aliases to match unresolved
-  Lambda environment-name hints. There is no public KMS key metadata tool.
-- Fixture: customer-managed key attached to one supported resource.
-- Emulator: MiniStack or Floci depending on KMS support.
-- Acceptance: no cryptographic material or decrypt operations are used.
-
-### 2. ECS Task And Service Summary
+### 1. ECS Task And Service Summary
 
 Add bounded ECS cluster/service/task definition summaries, focusing on desired
 count, deployment state, task role, execution role, containers, log groups, and
@@ -47,7 +34,7 @@ load balancer wiring.
 - Emulator: MiniStack likely.
 - Acceptance: no container env values or secrets are returned.
 
-### 3. Cross-Service Incident Brief
+### 2. Cross-Service Incident Brief
 
 Add an incident-brief tool that accepts a resource name fragment and produces a
 compact investigation bundle from existing safe tools: matching resources,

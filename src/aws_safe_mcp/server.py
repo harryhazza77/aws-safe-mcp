@@ -48,6 +48,8 @@ from aws_safe_mcp.tools.eventbridge import (
 from aws_safe_mcp.tools.iam import get_iam_role_summary as get_iam_role_summary_tool
 from aws_safe_mcp.tools.identity import aws_auth_status as get_aws_auth_status
 from aws_safe_mcp.tools.identity import aws_identity as get_aws_identity
+from aws_safe_mcp.tools.kms import get_kms_key_summary as get_kms_key_summary_tool
+from aws_safe_mcp.tools.kms import list_kms_keys as list_kms_keys_tool
 from aws_safe_mcp.tools.lambda_tools import (
     check_lambda_permission_path as check_lambda_permission_path_tool,
 )
@@ -113,6 +115,7 @@ def create_server(runtime: AwsRuntime) -> FastMCP:
     audit = AuditLogger(redaction=runtime.config.redaction)
     _register_identity_tools(mcp, audit, runtime)
     _register_iam_tools(mcp, audit, runtime)
+    _register_kms_tools(mcp, audit, runtime)
     _register_lambda_tools(mcp, audit, runtime)
     _register_step_functions_tools(mcp, audit, runtime)
     _register_s3_tools(mcp, audit, runtime)
@@ -151,6 +154,34 @@ def _register_iam_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
         return get_iam_role_summary_tool(
             runtime,
             role_name=role_name,
+            region=region,
+        )
+
+
+def _register_kms_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -> None:
+    @mcp.tool()
+    @audit.tool("list_kms_keys")
+    def list_kms_keys(
+        region: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """List KMS keys with safe metadata summaries."""
+        return list_kms_keys_tool(
+            runtime,
+            region=region,
+            max_results=max_results,
+        )
+
+    @mcp.tool()
+    @audit.tool("get_kms_key_summary")
+    def get_kms_key_summary(
+        key_id: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Summarize one KMS key without cryptographic or policy-document reads."""
+        return get_kms_key_summary_tool(
+            runtime,
+            key_id=key_id,
             region=region,
         )
 

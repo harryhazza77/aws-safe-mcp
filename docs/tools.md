@@ -51,6 +51,30 @@ Inputs:
 - `role_name` required, accepts a role name or role ARN
 - `region` optional
 
+## KMS
+
+### `list_kms_keys`
+
+Lists KMS keys with safe metadata such as state, usage, manager, origin, and
+creation/deletion timestamps. The tool does not decrypt, generate data keys, or
+return key policy documents.
+
+Inputs:
+
+- `region` optional
+- `max_results` optional
+
+### `get_kms_key_summary`
+
+Summarizes one KMS key by key ID, alias, or ARN. The result includes metadata,
+aliases, rotation status, and key policy name count without returning policy
+JSON or cryptographic material.
+
+Inputs:
+
+- `key_id` required
+- `region` optional
+
 ## Lambda
 
 ### `list_lambda_functions`

@@ -31,6 +31,18 @@ Related tools:
 
 - `get_iam_role_summary`
 
+## KMS Inspection
+
+- List KMS keys with bounded safe metadata, including state, usage, manager,
+  origin, and creation/deletion timestamps.
+- Summarize one KMS key with aliases, rotation status, and policy name count
+  without decrypting, generating data keys, or returning key policy JSON.
+
+Related tools:
+
+- `list_kms_keys`
+- `get_kms_key_summary`
+
 ## Lambda Investigation
 
 - List visible Lambda functions with concise configuration summaries.
