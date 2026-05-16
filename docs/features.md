@@ -54,7 +54,7 @@ Related tools:
 - Map a state machine into a dependency graph from its ASL definition without
   returning the full definition.
 - Extract task targets for common integrations such as Lambda, SNS, SQS,
-  DynamoDB, ECS, Batch, and nested Step Functions.
+  EventBridge PutEvents, DynamoDB, ECS, Batch, and nested Step Functions.
 - Summarize execution role metadata and inferred permission checks.
 
 Related tools:

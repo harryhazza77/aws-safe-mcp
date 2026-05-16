@@ -163,7 +163,7 @@ def explain_step_function_dependencies(
         runtime.config.redaction.max_string_length,
     )
     role_arn = str(state_machine.get("roleArn") or "")
-    states = _asl_states(definition)
+    states = _asl_states(definition, state_machine_arn)
     edges = _step_function_dependency_edges(state_machine_arn, states)
     role = _step_function_iam_role_summary(runtime, role_arn)
     permission_hints = _step_function_permission_hints(edges, role_arn)
@@ -259,14 +259,21 @@ def _parse_state_machine_definition(
     return parsed, []
 
 
-def _asl_states(definition: dict[str, Any]) -> list[dict[str, Any]]:
+def _asl_states(
+    definition: dict[str, Any],
+    state_machine_arn: str | None = None,
+) -> list[dict[str, Any]]:
     states = definition.get("States", {})
     if not isinstance(states, dict):
         return []
-    return [_asl_state_summary(name, value) for name, value in states.items()]
+    return [_asl_state_summary(name, value, state_machine_arn) for name, value in states.items()]
 
 
-def _asl_state_summary(name: str, value: Any) -> dict[str, Any]:
+def _asl_state_summary(
+    name: str,
+    value: Any,
+    state_machine_arn: str | None = None,
+) -> dict[str, Any]:
     state = value if isinstance(value, dict) else {}
     state_type = str(state.get("Type") or "")
     resource = state.get("Resource")
@@ -279,7 +286,7 @@ def _asl_state_summary(name: str, value: Any) -> dict[str, Any]:
         "type": state_type or None,
         "resource": resource if state_type == "Task" else None,
         "integration": _step_function_integration(resource),
-        "target_arn": _step_function_task_target_arn(resource, parameters),
+        "target_arn": _step_function_task_target_arn(resource, parameters, state_machine_arn),
         "next": state.get("Next"),
         "default_next": state.get("Default"),
         "choice_next": [
@@ -702,10 +709,15 @@ def _step_function_integration(resource: Any) -> str | None:
     return _arn_service(value)
 
 
-def _step_function_task_target_arn(resource: Any, parameters: dict[str, Any]) -> str | None:
+def _step_function_task_target_arn(
+    resource: Any,
+    parameters: dict[str, Any],
+    state_machine_arn: str | None = None,
+) -> str | None:
     value = str(resource or "")
     if value.startswith("arn:aws:lambda:"):
         return value
+    parsed_state_machine = _state_machine_parts(state_machine_arn)
     for key in [
         "FunctionName",
         "FunctionName.$",
@@ -719,11 +731,45 @@ def _step_function_task_target_arn(resource: Any, parameters: dict[str, Any]) ->
         "TableName.$",
         "JobQueue",
         "JobQueue.$",
+        "EventBusName",
+        "EventBusName.$",
     ]:
         candidate = parameters.get(key)
         if isinstance(candidate, str) and candidate.startswith("arn:"):
             return candidate
+        if key.startswith("QueueUrl") and isinstance(candidate, str):
+            queue_arn = _sqs_queue_arn_from_url(candidate)
+            if queue_arn:
+                return queue_arn
+        if key.startswith("TableName") and isinstance(candidate, str) and parsed_state_machine:
+            return (
+                f"arn:{parsed_state_machine['partition']}:dynamodb:"
+                f"{parsed_state_machine['region']}:{parsed_state_machine['account']}:"
+                f"table/{candidate}"
+            )
     return None
+
+
+def _state_machine_parts(state_machine_arn: str | None) -> dict[str, str] | None:
+    if not state_machine_arn:
+        return None
+    match = re.fullmatch(
+        r"arn:(?P<partition>aws[a-zA-Z-]*):states:(?P<region>[^:]+):"
+        r"(?P<account>\d{12}):stateMachine:.+",
+        state_machine_arn,
+    )
+    return match.groupdict() if match else None
+
+
+def _sqs_queue_arn_from_url(queue_url: str) -> str | None:
+    match = re.search(
+        r"https?://sqs[.-](?P<region>[^./]+)\.amazonaws\.com/(?P<account>\d{12})/(?P<name>[^/?]+)",
+        queue_url,
+    )
+    if not match:
+        return None
+    parts = match.groupdict()
+    return f"arn:aws:sqs:{parts['region']}:{parts['account']}:{parts['name']}"
 
 
 def _step_function_actions_for_integration(integration: Any, target: Any) -> list[str]:
@@ -739,6 +785,8 @@ def _step_function_actions_for_integration(integration: Any, target: Any) -> lis
         return ["sns:Publish"]
     if integration == "sqs":
         return ["sqs:SendMessage"]
+    if integration == "events":
+        return ["events:PutEvents"]
     if integration == "states":
         return ["states:StartExecution"]
     if integration == "dynamodb":
@@ -846,7 +894,7 @@ def _step_function_failure_definition_context(
         state_machine.get("definition"),
         runtime.config.redaction.max_string_length,
     )
-    states = _asl_states(definition)
+    states = _asl_states(definition, state_machine_arn)
     state = next(
         (item for item in states if item.get("name") == failed_state.get("state_name")),
         None,
