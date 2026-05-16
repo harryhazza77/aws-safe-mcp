@@ -128,6 +128,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "search_aws_resources",
         "search_aws_resources_by_tag",
         "get_cross_service_incident_brief",
+        "build_log_signal_correlation_timeline",
         "plan_end_to_end_transaction_trace",
         "get_risk_scored_dependency_health_summary",
     }

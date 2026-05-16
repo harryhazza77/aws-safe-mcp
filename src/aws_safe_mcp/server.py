@@ -130,6 +130,9 @@ from aws_safe_mcp.tools.lambda_tools import (
     simulate_lambda_security_group_path as simulate_lambda_security_group_path_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
+    build_log_signal_correlation_timeline as build_log_signal_correlation_timeline_tool,
+)
+from aws_safe_mcp.tools.resource_search import (
     diagnose_region_partition_mismatches as diagnose_region_partition_mismatches_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
@@ -1347,6 +1350,21 @@ def _register_search_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
     ) -> dict[str, object]:
         """Compose a bounded incident brief from existing safe discovery tools."""
         return get_cross_service_incident_brief_tool(
+            runtime,
+            query=query,
+            region=region,
+            max_matches=max_matches,
+        )
+
+    @mcp.tool()
+    @audit.tool("build_log_signal_correlation_timeline")
+    def build_log_signal_correlation_timeline(
+        query: str,
+        region: str | None = None,
+        max_matches: int | None = None,
+    ) -> dict[str, object]:
+        """Build a bounded timeline from alarms and Lambda log signals."""
+        return build_log_signal_correlation_timeline_tool(
             runtime,
             query=query,
             region=region,

@@ -10,6 +10,7 @@ from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import ToolInputError
 from aws_safe_mcp.tools import resource_search
 from aws_safe_mcp.tools.resource_search import (
+    build_log_signal_correlation_timeline,
     diagnose_region_partition_mismatches,
     get_cross_service_incident_brief,
     get_risk_scored_dependency_health_summary,
@@ -243,6 +244,43 @@ def test_get_cross_service_incident_brief_composes_existing_tools(
     assert result["lambda_context"][0]["recent_error_count"] == 1
     assert result["lambda_context"][0]["dependency_summary"] == {"edge_count": 1}
     assert any("CloudWatch alarms" in check for check in result["suggested_next_checks"])
+
+
+def test_build_log_signal_correlation_timeline_orders_alarm_and_lambda_signals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_brief(*_: Any, **__: Any) -> dict[str, Any]:
+        return {
+            "alarm_matches": [
+                {
+                    "alarm_name": "dev-api-errors",
+                    "namespace": "AWS/Lambda",
+                    "metric_name": "Errors",
+                    "state_value": "ALARM",
+                    "inferred_resources": [{"name": "dev-api"}],
+                }
+            ],
+            "lambda_context": [
+                {
+                    "function_name": "dev-api",
+                    "recent_error_count": 2,
+                    "recent_error_groups": [{"fingerprint": "ERROR", "count": 2}],
+                }
+            ],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(resource_search, "get_cross_service_incident_brief", fake_brief)
+
+    result = build_log_signal_correlation_timeline(FakeRuntime(), "dev-api")
+
+    assert result["summary"] == {
+        "symptom_count": 2,
+        "likely_first_failure_point": "cloudwatch_alarm",
+        "status": "signals_found",
+    }
+    assert result["timeline"][0]["name"] == "dev-api-errors"
+    assert result["timeline"][1]["source"] == "lambda_logs"
 
 
 def test_plan_end_to_end_transaction_trace_orders_probable_path(

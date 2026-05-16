@@ -156,6 +156,33 @@ def get_cross_service_incident_brief(
     }
 
 
+def build_log_signal_correlation_timeline(
+    runtime: AwsRuntime,
+    query: str,
+    region: str | None = None,
+    max_matches: int | None = None,
+) -> dict[str, Any]:
+    brief = get_cross_service_incident_brief(
+        runtime,
+        query=query,
+        region=region,
+        max_matches=max_matches,
+    )
+    symptoms = _timeline_symptoms(brief)
+    return {
+        "query": query.strip(),
+        "region": region or runtime.region,
+        "timeline": symptoms,
+        "summary": {
+            "symptom_count": len(symptoms),
+            "likely_first_failure_point": symptoms[0]["source"] if symptoms else None,
+            "status": "signals_found" if symptoms else "no_signals",
+        },
+        "suggested_next_checks": _timeline_next_checks(symptoms),
+        "warnings": brief.get("warnings", []),
+    }
+
+
 def plan_end_to_end_transaction_trace(
     runtime: AwsRuntime,
     seed_resource: str,
@@ -341,6 +368,51 @@ def _incident_next_checks(
         checks.append(
             "Open the matching resource summaries and follow dependency tools for the service."
         )
+    return checks
+
+
+def _timeline_symptoms(brief: dict[str, Any]) -> list[dict[str, Any]]:
+    symptoms: list[dict[str, Any]] = []
+    for alarm in brief.get("alarm_matches", []):
+        symptoms.append(
+            {
+                "source": "cloudwatch_alarm",
+                "name": alarm.get("alarm_name"),
+                "signal": alarm.get("metric_name"),
+                "state": alarm.get("state_value"),
+                "evidence": {
+                    "namespace": alarm.get("namespace"),
+                    "inferred_resources": alarm.get("inferred_resources", []),
+                },
+            }
+        )
+    for context in brief.get("lambda_context", []):
+        if context.get("recent_error_count"):
+            symptoms.append(
+                {
+                    "source": "lambda_logs",
+                    "name": context.get("function_name"),
+                    "signal": "recent_errors",
+                    "state": "present",
+                    "evidence": {
+                        "recent_error_count": context.get("recent_error_count"),
+                        "groups": context.get("recent_error_groups", []),
+                    },
+                }
+            )
+    return symptoms
+
+
+def _timeline_next_checks(symptoms: list[dict[str, Any]]) -> list[str]:
+    checks = []
+    if any(item["source"] == "cloudwatch_alarm" for item in symptoms):
+        checks.append("Start with the earliest matching CloudWatch alarm and its dimensions.")
+    if any(item["source"] == "lambda_logs" for item in symptoms):
+        checks.append(
+            "Inspect grouped Lambda error fingerprints for the first application failure."
+        )
+    if not checks:
+        checks.append("No correlated log or alarm signal found for the query.")
     return checks
 
 

@@ -990,6 +990,19 @@ Inputs:
 - `region` optional
 - `max_matches` optional
 
+### `build_log_signal_correlation_timeline`
+
+Builds a bounded timeline from matching CloudWatch alarms and Lambda recent
+error groups using existing safe diagnostic tools. It returns ordered symptoms,
+evidence summaries, and a likely first-failure point without payloads, full log
+streams, or secret values.
+
+Inputs:
+
+- `query` required
+- `region` optional
+- `max_matches` optional
+
 ### `plan_end_to_end_transaction_trace`
 
 Builds an ordered investigation plan from a seed resource name. It reuses the
