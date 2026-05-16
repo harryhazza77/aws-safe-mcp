@@ -133,6 +133,9 @@ from aws_safe_mcp.tools.resource_search import (
     analyze_resource_policy_condition_mismatches as condition_mismatch_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
+    audit_multi_region_drift_failover_readiness as multi_region_drift_tool,
+)
+from aws_safe_mcp.tools.resource_search import (
     build_log_signal_correlation_timeline as build_log_signal_correlation_timeline_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
@@ -1454,4 +1457,19 @@ def _register_search_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
             source_arn=source_arn,
             target_arn=target_arn,
             condition_summaries=condition_summaries,
+        )
+
+    @mcp.tool()
+    @audit.tool("audit_multi_region_drift_failover_readiness")
+    def audit_multi_region_drift_failover_readiness(
+        application_prefix: str,
+        regions: list[str],
+        max_matches: int | None = None,
+    ) -> dict[str, object]:
+        """Compare discovered application resources across regions for drift."""
+        return multi_region_drift_tool(
+            runtime,
+            application_prefix=application_prefix,
+            regions=regions,
+            max_matches=max_matches,
         )

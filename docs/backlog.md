@@ -30,21 +30,14 @@ current public tool surface in `src/aws_safe_mcp/server.py` and
 `src/aws_safe_mcp/tools/*`; scopes focus on new diagnostic value beyond existing
 single-resource summaries, dependency graphs, and permission checks.
 
-1. **Multi-region drift and failover readiness audit** _(Large)_
-    - Compare discovered resources and dependency hints across configured
-      regions for missing peers, region-encoded env var drift, endpoint override
-      drift, and KMS/multi-region key mismatch.
-    - Remain read-only with no failover actions, resource creation, or payload
-      reads.
-
-2. **Queue/DLQ replay readiness analyzer** _(Large)_
+1. **Queue/DLQ replay readiness analyzer** _(Large)_
     - For SQS DLQs and Lambda/EventBridge failure destinations, inspect redrive
       policy, source queue mapping, consumer presence, retention, KMS hints, and
       approximate age/depth.
     - Explain whether replay is likely safe and what edge must be checked first
       without reading or replaying messages.
 
-3. **Application health narrative generator** _(XLarge)_
+2. **Application health narrative generator** _(XLarge)_
     - Combine dependency graph, risk scores, alarm gaps, retry topology,
       callability proofs, network reachability, and recent failure signals into
       a concise incident-ready narrative.

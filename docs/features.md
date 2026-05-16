@@ -334,6 +334,8 @@ Related tools:
   symptom, stopping at the first blocked or unknown edge with a next safe tool.
 - Analyze redacted resource-policy source condition summaries for wildcard
   overreach, missing source constraints, and source ARN/account mismatches.
+- Audit multi-region drift and failover readiness by comparing discovered
+  application resources for missing peers and region-encoded naming drift.
 - Produce a risk-scored dependency health summary for an application prefix
   using discovered resources and service-specific follow-up risks.
 
@@ -349,6 +351,7 @@ Related tools:
 - `export_application_dependency_graph`
 - `run_first_blocked_edge_incident`
 - `analyze_resource_policy_condition_mismatches`
+- `audit_multi_region_drift_failover_readiness`
 
 ## Local Emulator Workflows
 

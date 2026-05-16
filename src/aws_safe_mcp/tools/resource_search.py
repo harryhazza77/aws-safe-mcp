@@ -352,6 +352,50 @@ def analyze_resource_policy_condition_mismatches(
     }
 
 
+def audit_multi_region_drift_failover_readiness(
+    runtime: AwsRuntime,
+    application_prefix: str,
+    regions: list[str],
+    max_matches: int | None = None,
+) -> dict[str, Any]:
+    prefix = application_prefix.strip()
+    if not prefix:
+        raise ToolInputError("application_prefix is required")
+    normalized_regions = [item.strip() for item in regions if item.strip()]
+    if len(normalized_regions) < 2:
+        raise ToolInputError("regions must include at least two regions")
+    regional_results = {
+        region: search_aws_resources(
+            runtime,
+            query=prefix,
+            region=region,
+            max_results=max_matches,
+        )
+        for region in normalized_regions
+    }
+    fingerprints = {
+        region: {_regional_resource_fingerprint(item): item for item in result.get("results", [])}
+        for region, result in regional_results.items()
+    }
+    findings = _multi_region_missing_peer_findings(fingerprints)
+    findings.extend(_multi_region_name_drift_findings(fingerprints))
+    warnings: list[str] = []
+    for result in regional_results.values():
+        warnings.extend(result.get("warnings", []))
+    return {
+        "application_prefix": prefix,
+        "regions": normalized_regions,
+        "summary": _multi_region_drift_summary(findings),
+        "findings": findings,
+        "regional_counts": {
+            region: result.get("count", 0) for region, result in regional_results.items()
+        },
+        "raw_policy_documents_returned": False,
+        "payloads_returned": False,
+        "warnings": warnings,
+    }
+
+
 def diagnose_region_partition_mismatches(
     runtime: AwsRuntime,
     resource_refs: list[str],
@@ -768,6 +812,65 @@ def _as_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
     return [value]
+
+
+def _regional_resource_fingerprint(resource: dict[str, Any]) -> str:
+    service = str(resource.get("service") or "unknown")
+    name = str(resource.get("name") or "")
+    normalized_name = re.sub(r"\b[a-z]{2}-[a-z]+-\d\b", "{region}", name)
+    return f"{service}:{normalized_name}"
+
+
+def _multi_region_missing_peer_findings(
+    fingerprints: dict[str, dict[str, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    all_keys = sorted({key for resources in fingerprints.values() for key in resources})
+    findings = []
+    for key in all_keys:
+        present = [region for region, resources in fingerprints.items() if key in resources]
+        missing = [region for region in fingerprints if region not in present]
+        if missing:
+            findings.append(
+                {
+                    "status": "missing_peer",
+                    "risk": "failover_gap",
+                    "resource_fingerprint": key,
+                    "present_regions": present,
+                    "missing_regions": missing,
+                }
+            )
+    return findings
+
+
+def _multi_region_name_drift_findings(
+    fingerprints: dict[str, dict[str, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    findings = []
+    for region, resources in fingerprints.items():
+        for item in resources.values():
+            name = str(item.get("name") or "")
+            encoded_regions = re.findall(r"\b[a-z]{2}-[a-z]+-\d\b", name)
+            if encoded_regions and region not in encoded_regions:
+                findings.append(
+                    {
+                        "status": "region_encoded_name_drift",
+                        "risk": "endpoint_or_failover_drift",
+                        "region": region,
+                        "resource": name,
+                        "encoded_regions": sorted(set(encoded_regions)),
+                    }
+                )
+    return findings
+
+
+def _multi_region_drift_summary(findings: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "status": "drift_found" if findings else "aligned",
+        "finding_count": len(findings),
+        "missing_peer_count": sum(
+            1 for finding in findings if finding["status"] == "missing_peer"
+        ),
+    }
 
 
 def _selected_services(services: list[str] | None) -> list[str]:

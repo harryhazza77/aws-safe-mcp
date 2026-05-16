@@ -11,6 +11,7 @@ from aws_safe_mcp.errors import ToolInputError
 from aws_safe_mcp.tools import resource_search
 from aws_safe_mcp.tools.resource_search import (
     analyze_resource_policy_condition_mismatches,
+    audit_multi_region_drift_failover_readiness,
     build_log_signal_correlation_timeline,
     diagnose_region_partition_mismatches,
     export_application_dependency_graph,
@@ -394,6 +395,46 @@ def test_analyze_resource_policy_condition_mismatches_flags_bad_sources() -> Non
         "source_arn_mismatch",
         "wildcard_overreach",
     ]
+
+
+def test_audit_multi_region_drift_failover_readiness_flags_missing_peer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_search(
+        _: FakeRuntime,
+        query: str,
+        region: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, Any]:
+        assert query == "dev"
+        assert max_results is None
+        if region == "eu-west-2":
+            return {
+                "count": 2,
+                "results": [
+                    {"service": "lambda", "name": "dev-api-eu-west-2"},
+                    {"service": "sqs", "name": "dev-work"},
+                ],
+                "warnings": [],
+            }
+        return {
+            "count": 1,
+            "results": [{"service": "lambda", "name": "dev-api-eu-west-2"}],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(resource_search, "search_aws_resources", fake_search)
+
+    result = audit_multi_region_drift_failover_readiness(
+        FakeRuntime(),
+        "dev",
+        ["eu-west-2", "us-east-1"],
+    )
+
+    assert result["summary"]["status"] == "drift_found"
+    assert result["summary"]["missing_peer_count"] == 1
+    assert result["raw_policy_documents_returned"] is False
+    assert result["payloads_returned"] is False
 
 
 def test_get_risk_scored_dependency_health_summary_scores_resources(

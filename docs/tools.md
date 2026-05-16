@@ -1064,3 +1064,15 @@ Inputs:
 - `source_arn` required
 - `target_arn` required
 - `condition_summaries` required
+
+### `audit_multi_region_drift_failover_readiness`
+
+Compares discovered application resources across two or more regions. It flags
+missing regional peers and region-encoded name drift without performing failover
+actions, reading payloads, or returning raw policy documents.
+
+Inputs:
+
+- `application_prefix` required
+- `regions` required
+- `max_matches` optional
