@@ -71,6 +71,48 @@ can authenticate later with `aws login`, `aws sso login`, an assumed-role
 profile, or environment credentials, then call `get_aws_auth_status` or any AWS tool
 without restarting the MCP server.
 
+### Data Flow
+
+The data path for a single tool call, with the guardrail enforced at each hop.
+Aligned with the Data-flow summary in
+[docs/security/threat-model.md](security/threat-model.md).
+
+```mermaid
+flowchart LR
+    client[MCP client] -->|tool call args| proc[aws-safe-mcp process]
+    proc -->|account allowlist check| boto[boto3 session + STS]
+    boto -->|sigv4 HTTPS| aws[AWS read-only APIs]
+    aws -->|raw response| shape[Tool summariser]
+    shape -->|redaction + truncation| client
+    shape -->|redacted audit JSON| stderr[Audit logger stderr]
+```
+
+### Audit Log Shape
+
+Every tool call emits structured JSON to stderr through `AuditLogger.tool`
+in [`src/aws_safe_mcp/audit.py`](../src/aws_safe_mcp/audit.py). Arguments
+are bound against the wrapped function signature and passed through
+`redact_data` before logging. A single completion record looks like:
+
+```json
+{
+  "arguments": {
+    "max_results": 25,
+    "region": "eu-west-1"
+  },
+  "duration_ms": 142,
+  "error_type": null,
+  "event": "tool_call_completed",
+  "tool": "list_lambda_functions"
+}
+```
+
+The record is redacted (secret-like keys replaced with `[REDACTED]`, strings
+clamped by `truncate_string`) and emitted to stderr. The decorator also
+emits `tool_call_started` (with `duration_ms` and `error_type` as `null`)
+and `tool_call_failed` (with `error_type` set to the exception class name)
+events using the same field set.
+
 ## Main Modules
 
 - `main.py`: CLI parsing and process entrypoint.
@@ -135,18 +177,15 @@ failing the whole investigation.
 
 ## Safety Rules For New Tools
 
-New tools should follow these rules:
+New tools must be read-only, bounded, redacted, and account-allowlisted: they
+call only read-only AWS APIs, never return secret material or raw payloads
+(no S3 object bodies, no DynamoDB items, no Lambda env values, no full policy
+documents), clamp pagination/time-windows/result counts, redact and truncate
+returned strings, treat missing optional permissions as warnings rather than
+errors, and ship with tests for behaviour, limits, and redaction.
 
-- Use read-only AWS APIs only.
-- Do not fetch secret values.
-- Do not fetch S3 object bodies.
-- Do not scan, query, or read DynamoDB items in v1.
-- Do not return full Lambda environment values.
-- Bound pagination, time windows, and result counts.
-- Truncate long strings.
-- Return concise summaries rather than full AWS JSON blobs.
-- Keep missing permissions non-fatal when a partial answer is still useful.
-- Include tests for redaction, limits, pagination, and error behavior.
+Full rules: [docs/standards.md](standards.md). The enforcing tests are listed
+there.
 
 ## Extension Direction
 

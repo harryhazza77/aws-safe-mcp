@@ -34,6 +34,11 @@ Please report issues such as:
 - Excessively large or unbounded responses that may leak sensitive logs or
   destabilize an MCP client.
 
+See [docs/security/threat-model.md](docs/security/threat-model.md) for the
+STRIDE-shaped analysis and
+[docs/security/redaction-scope.md](docs/security/redaction-scope.md) for the
+concrete per-tool-family redaction blocklist.
+
 ## Safe Disclosure Guidance
 
 When reporting, include:
@@ -48,11 +53,20 @@ or complete production log dumps.
 
 ## Project Safety Boundaries
 
-Version 1 intentionally does not include:
+The full, canonical project safety rules live in
+[docs/standards.md](docs/standards.md).
 
-- Write-capable AWS tools.
-- A generic `aws_call` or raw SDK passthrough.
-- S3 object body reads.
-- DynamoDB item reads, scans, or queries.
-- Secret Manager or SSM Parameter value reads.
-- Full Lambda environment variable values.
+## Release Safety Audit
+
+Every release must be green on the gates below before tagging. CI runs each
+enforcing test on every pull request; the release checklist re-verifies them
+manually as a second gate — see
+[docs/release-checklist.md](docs/release-checklist.md).
+
+| Gate | Enforcing test or code path | Description |
+| --- | --- | --- |
+| Read-only invariant | [`tests/test_invariants.py`](tests/test_invariants.py) | Statically rejects any mutating boto3 verb in tool modules and asserts every `@mcp.tool` is wrapped with `@audit.tool`. |
+| Redaction invariants | [`tests/test_redaction_properties.py`](tests/test_redaction_properties.py) | Hypothesis property tests pin case-insensitive secret-key detection, env-locked redaction, idempotent text redaction, and recursive shape preservation. |
+| Naming convention | [`tests/test_naming_conventions.py`](tests/test_naming_conventions.py) | Enforces approved verb prefixes, `_summary` / `list_*` suffix rules, per-module subject keywords, and unique MCP tool names. |
+| Account allowlist | [`src/aws_safe_mcp/auth.py::AwsRuntime._load_and_validate_identity`](src/aws_safe_mcp/auth.py) | Refreshes the STS identity on every `client(...)` and rejects accounts outside `allowed_account_ids`. |
+| Test surface | [`tests/test_mcp_smoke.py`](tests/test_mcp_smoke.py) | Pins the exact set of registered MCP tools; accidental drop or addition fails fast. |

@@ -4,6 +4,8 @@
 [![PyPI](https://img.shields.io/pypi/v/aws-safe-mcp.svg)](https://pypi.org/project/aws-safe-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/aws-safe-mcp.svg)](https://pypi.org/project/aws-safe-mcp/)
 
+[Changelog](CHANGELOG.md) · [Quickstart](docs/quickstart.md) · [Troubleshooting](docs/troubleshooting.md)
+
 Safe, read-only AWS investigation tools for AI coding agents.
 
 `aws-safe-mcp` is a local, read-only MCP server for investigating AWS resources
@@ -27,6 +29,8 @@ Use it to:
 ## Install In An AI Client
 
 Use the published package with any MCP client that supports stdio:
+
+Create `~/.config/aws-safe-mcp/config.yaml` first (see [Quickstart](docs/quickstart.md)) — `uvx` will fail without it.
 
 ```bash
 uvx aws-safe-mcp \
@@ -91,15 +95,14 @@ diagnostic layer beside it.
 
 ## Safety Promises
 
-- No generic `aws_call` tool.
-- No write-capable AWS tools in v1.
-- No raw AWS SDK passthrough.
-- No S3 object body reads.
-- No DynamoDB scan, query, or item reads.
-- No secret, parameter, or Lambda environment value disclosure.
-- AWS account IDs must be explicitly allowlisted.
-- Tool calls are audit logged as structured JSON to stderr.
-- Secret-like values are redacted and long strings are truncated.
+`aws-safe-mcp` is read-only by construction: no generic SDK passthrough, no
+write-capable AWS verbs in v1, no S3 object body or DynamoDB item reads, and
+no disclosure of secrets, SSM parameter values, or Lambda environment values.
+Every tool call runs against an explicitly allowlisted AWS account, is audit
+logged as structured JSON to stderr, and has its returned strings redacted and
+bounded.
+
+Full rules and the gating tests live in [`docs/standards.md`](docs/standards.md).
 
 See [docs/limitations.md](docs/limitations.md) for known limitations and safety
 tradeoffs.
@@ -210,6 +213,18 @@ Trace network access for Lambda <function-name>. Use AWS MCP only.
 ```text
 Trace the event-driven flow for source aws.s3, detail type Object Created, bucket <bucket-name>, and .csv object keys. Use AWS MCP only.
 ```
+
+## Feedback and Ideas
+
+Found a rough edge or want a new investigation tool? Start with
+[`docs/limitations.md`](docs/limitations.md) to see whether the constraint is
+already known and intentional.
+
+If it is not, file a GitHub issue at
+[https://github.com/harryhazza77/aws-safe-mcp/issues/new](https://github.com/harryhazza77/aws-safe-mcp/issues/new)
+using the templates in `.github/ISSUE_TEMPLATE/` — `feature.md` for a new
+capability request, and `limitation.md` to report a behavior that surprises
+you so we can either fix it or document it.
 
 ## Tools
 

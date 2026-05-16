@@ -29,11 +29,15 @@ Permission checks include `enabled`, `checked_count`, `summary`, and `checks`.
 
 ### `get_aws_auth_status`
 
+*Use when:* starting a session; confirms the server is authenticated and which account, principal, and region are active.
+
 Reports whether the server is authenticated and shows the active AWS account,
 principal type, role/user name, session name, profile, region, read-only status,
 and a concise message when credentials are missing or expired.
 
 ### `get_aws_identity`
+
+*Use when:* starting a session; confirms your principal, account, and configured region before any further checks.
 
 Returns the current AWS account, ARN, user ID, configured profile, configured
 region, and read-only status.
@@ -41,6 +45,8 @@ region, and read-only status.
 ## IAM
 
 ### `get_iam_role_summary`
+
+*Use when:* you suspect an IAM role is missing policies, trust, or a permission boundary behind a failure.
 
 Summarizes one IAM role by name or ARN. The result includes trust-policy shape,
 attached and inline policy counts/names, service principals, and permission
@@ -52,6 +58,8 @@ Inputs:
 - `region` optional
 
 ### `explain_iam_simulation_denial`
+
+*Use when:* an action is denied and you need to know which policy layer or missing condition key caused it.
 
 Runs IAM policy simulation for one principal, action, and resource, then
 summarizes deny results with matched statement metadata, missing context keys,
@@ -69,6 +77,8 @@ Inputs:
 
 ### `list_kms_keys`
 
+*Use when:* triaging an encryption issue and you need to see which KMS keys exist, their state, and usage.
+
 Lists KMS keys with safe metadata such as state, usage, manager, origin, and
 creation/deletion timestamps. The tool does not decrypt, generate data keys, or
 return key policy documents.
@@ -80,6 +90,8 @@ Inputs:
 
 ### `get_kms_key_summary`
 
+*Use when:* you suspect a KMS key is disabled, rotated, or aliased wrong and want safe metadata fast.
+
 Summarizes one KMS key by key ID, alias, or ARN. The result includes metadata,
 aliases, rotation status, and key policy name count without returning policy
 JSON or cryptographic material.
@@ -90,6 +102,8 @@ Inputs:
 - `region` optional
 
 ### `check_kms_dependent_path`
+
+*Use when:* an encrypted operation fails and you need to know if the role and service can decrypt or encrypt with the key.
 
 Checks whether an IAM role and optional AWS service principal can use a KMS key
 for encrypted service paths. It simulates role permissions for decrypt, encrypt,
@@ -104,6 +118,8 @@ Inputs:
 - `region` optional
 
 ### `find_kms_key_lifecycle_blast_radius`
+
+*Use when:* a KMS key is disabled or pending deletion and you need to map which dependent resources are affected.
 
 Finds lifecycle blast-radius risk for one KMS key. It reports disabled,
 pending-deletion, or pending-import key state and maps supplied dependent
@@ -120,6 +136,8 @@ Inputs:
 
 ### `list_lambda_functions`
 
+*Use when:* you need to find which Lambda functions exist before deeper investigation.
+
 Lists Lambda functions visible to the active AWS credentials.
 
 Inputs:
@@ -130,6 +148,8 @@ Inputs:
 
 ### `get_lambda_summary`
 
+*Use when:* you need a Lambda's runtime, memory, timeout, and environment key shape without exposing values.
+
 Returns a concise Lambda configuration summary. Environment variable values are
 never returned; only variable keys are included.
 
@@ -139,6 +159,8 @@ Inputs:
 - `region` optional
 
 ### `get_lambda_event_source_mapping_diagnostics`
+
+*Use when:* a Lambda isn't consuming from its SQS, Kinesis, or DynamoDB source and you need mapping state and permissions.
 
 Summarizes Lambda event source mappings without reading queue messages or stream
 records. The result includes source type, state, batch/window settings, last
@@ -155,6 +177,8 @@ Inputs:
 
 ### `get_lambda_alias_version_summary`
 
+*Use when:* you suspect alias routing, a wrong version, or stale provisioned concurrency behind a Lambda issue.
+
 Summarizes Lambda aliases and published versions without fetching code package
 contents. The result includes weighted alias routing, published version metadata,
 provisioned concurrency presence, and Lambda resource policy hints without
@@ -167,6 +191,8 @@ Inputs:
 - `max_results` optional
 
 ### `investigate_lambda_deployment_drift`
+
+*Use when:* a Lambda behaves differently than expected after a deploy and you suspect alias, version, or runtime drift.
 
 Checks Lambda alias/version deployment drift without fetching code. It compares
 current update status, runtime, architecture, environment key set, aliases,
@@ -182,6 +208,8 @@ Inputs:
 
 ### `get_lambda_recent_errors`
 
+*Use when:* a Lambda is erroring and you want grouped recent CloudWatch error events fast.
+
 Returns recent error-like CloudWatch log events for one Lambda function. The
 tool derives `/aws/lambda/{function_name}`, clamps time/result limits,
 truncates messages, and groups similar failures.
@@ -195,6 +223,8 @@ Inputs:
 
 ### `investigate_lambda_failure`
 
+*Use when:* a Lambda is failing or erroring intermittently and you want a correlated view of config, metrics, and recent errors.
+
 Combines Lambda configuration, recent CloudWatch metrics, and recent grouped
 error logs into a diagnostic summary with suggested next checks. The diagnostic
 also includes best-effort alias and event source mapping summaries.
@@ -206,6 +236,8 @@ Inputs:
 - `region` optional
 
 ### `investigate_lambda_cold_start_init`
+
+*Use when:* a Lambda has slow cold starts or init failures and you need runtime, memory, VPC, and init-duration context.
 
 Correlates Lambda runtime/package shape, memory, architecture, timeout, VPC
 attachment, init duration metrics, and bounded init/error log patterns to
@@ -220,6 +252,8 @@ Inputs:
 
 ### `investigate_lambda_timeout_root_cause`
 
+*Use when:* a Lambda is hitting its timeout and you need to classify whether config, dependency, network, or source pressure is at fault.
+
 Combines timeout configuration, max duration metric, recent timeout/error log
 groups, dependency hints, network posture, and event source mapping pressure to
 classify likely timeout causes. It does not read payloads or secret values.
@@ -231,6 +265,8 @@ Inputs:
 - `region` optional
 
 ### `audit_async_lambda_failure_path`
+
+*Use when:* you suspect async Lambda invocations are being silently dropped and need to see retries, DLQ, and destinations.
 
 Audits where asynchronously invoked Lambda events go when invocation fails. The
 tool summarizes async retry settings, maximum event age, on-failure/on-success
@@ -244,6 +280,8 @@ Inputs:
 
 ### `investigate_lambda_concurrency_bottlenecks`
 
+*Use when:* a Lambda is throttling or backed up and you suspect reserved concurrency or event source pressure.
+
 Correlates reserved concurrency, recent throttle/invocation metrics, and event
 source mapping state to flag likely Lambda delivery bottlenecks.
 
@@ -253,6 +291,8 @@ Inputs:
 - `region` optional
 
 ### `explain_lambda_dependencies`
+
+*Use when:* triaging a Lambda and you need its full dependency graph — role, log group, VPC, DLQ, mappings, and inferred permission checks.
 
 Maps one Lambda into a compact dependency graph. It combines configuration,
 execution role metadata, CloudWatch log group expectations, VPC attachment,
@@ -270,6 +310,8 @@ Inputs:
 - `max_permission_checks` optional
 
 ### `explain_lambda_network_access`
+
+*Use when:* a VPC Lambda can't reach an endpoint and you need to inspect subnets, security groups, route tables, NACLs, and VPC endpoints.
 
 Traces inferred internet and private network reachability for one Lambda from
 static AWS configuration. For VPC Lambdas, it inspects Lambda VPC config,
@@ -295,6 +337,8 @@ Inputs:
 
 ### `simulate_lambda_security_group_path`
 
+*Use when:* you suspect a security group is blocking Lambda egress to a target CIDR or port.
+
 Simulates whether a Lambda's security groups allow egress to a target CIDR and
 port. When a target security group is supplied, the tool also checks whether
 that group allows ingress from the Lambda subnet CIDRs on the same port.
@@ -309,6 +353,8 @@ Inputs:
 
 ### `check_lambda_permission_path`
 
+*Use when:* you suspect a Lambda execution role lacks one specific action on one specific resource.
+
 Checks whether one Lambda execution role appears allowed to perform one IAM
 action on one AWS resource ARN. Uses IAM policy simulation when available. If
 simulation is unavailable, the tool returns `decision: unknown` with warnings.
@@ -322,6 +368,8 @@ Inputs:
 
 ### `check_lambda_to_sqs_sendability`
 
+*Use when:* a Lambda can't send to an SQS queue and you need IAM, queue policy, FIFO, and KMS hints in one shot.
+
 Checks whether one Lambda appears able to send messages to one SQS queue. The
 tool combines Lambda execution-role IAM simulation, queue policy inspection,
 region/account comparison, FIFO hints, and KMS encryption hints. It does not
@@ -334,6 +382,8 @@ Inputs:
 - `region` optional
 
 ### `prove_lambda_invocation_path`
+
+*Use when:* a caller can't seem to invoke a Lambda and you need end-to-end proof of source ARN, resource policy, and IAM.
 
 Checks a suspected Lambda invocation path end to end. The proof covers function
 existence, source ARN region/account alignment, event-source mapping evidence,
@@ -350,6 +400,8 @@ Inputs:
 
 ### `analyze_cross_account_lambda_invocation`
 
+*Use when:* a cross-account caller can't invoke a Lambda and you need account-drift findings on top of invocation proof.
+
 Wraps Lambda invocation proof with cross-account findings for caller principal,
 source ARN, and Lambda account drift. It highlights proof blockers without
 returning policy documents.
@@ -365,6 +417,8 @@ Inputs:
 
 ### `list_step_functions`
 
+*Use when:* you need to find which Step Functions state machines exist before drilling into one.
+
 Lists Step Functions state machines visible to the active AWS credentials.
 
 Inputs:
@@ -374,6 +428,8 @@ Inputs:
 - `max_results` optional
 
 ### `get_step_function_execution_summary`
+
+*Use when:* you have one Step Functions execution ARN and need its status with redacted input/output safely.
 
 Returns one Step Functions execution summary. Input and output are redacted,
 truncated, and returned as strings rather than raw blobs. Execution ARN account
@@ -386,6 +442,8 @@ Inputs:
 
 ### `investigate_step_function_failure`
 
+*Use when:* a Step Functions execution failed and you need the failed state, error/cause, and retry/catch context.
+
 Diagnoses one execution using execution status, failed history event,
 error/cause text, previous event context, the failed ASL state definition,
 retry/catch shape, likely downstream target, and suggested next checks.
@@ -396,6 +454,8 @@ Inputs:
 - `region` optional
 
 ### `audit_step_function_retry_catch_safety`
+
+*Use when:* you suspect a state machine has missing catches or high-risk no-retry tasks that drop work on failure.
 
 Audits one state machine's task retry/catch coverage without returning the full
 ASL definition. It summarizes per-task retry/catch counts, terminal Fail
@@ -408,6 +468,8 @@ Inputs:
 - `region` optional
 
 ### `explain_step_function_dependencies`
+
+*Use when:* triaging a state machine and you need its task targets, execution role, and per-state permission proof.
 
 Maps one state machine into a compact dependency graph. It parses ASL, extracts
 Task state targets such as Lambda, SNS, SQS, DynamoDB, ECS, Batch, and nested
@@ -427,6 +489,8 @@ Inputs:
 
 ### `list_s3_buckets`
 
+*Use when:* you need to confirm which S3 buckets exist for the active credentials before deeper checks.
+
 Lists S3 bucket names and creation dates visible to the active AWS credentials.
 Object contents are never fetched.
 
@@ -435,6 +499,8 @@ Inputs:
 - `max_results` optional
 
 ### `list_s3_objects`
+
+*Use when:* you need to confirm whether an object key or prefix exists in an S3 bucket without reading bodies.
 
 Lists object metadata in one S3 bucket. Object contents are never fetched.
 
@@ -447,6 +513,8 @@ Inputs:
 
 ### `get_s3_bucket_summary`
 
+*Use when:* triaging an S3 bucket and you want versioning, encryption, public-access, lifecycle, and notification shape at a glance.
+
 Summarizes one S3 bucket using metadata APIs only. Includes bucket location,
 versioning, encryption, public access block, lifecycle rule counts, access
 logging, and notification configuration counts.
@@ -457,6 +525,8 @@ Inputs:
 - `region` optional
 
 ### `check_s3_notification_destination_readiness`
+
+*Use when:* S3 events aren't reaching Lambda, SQS, or SNS and you need to inspect destination policies and event filters.
 
 Checks S3 notification destinations for Lambda, SQS, and SNS readiness. It
 summarizes destination ARNs, event names, filter rules, and destination policy
@@ -472,6 +542,8 @@ Inputs:
 
 ### `list_dynamodb_tables`
 
+*Use when:* you need to find which DynamoDB tables exist before deeper investigation.
+
 Lists DynamoDB table names visible to the active AWS credentials. No scan,
 query, or item read is performed.
 
@@ -483,6 +555,8 @@ Inputs:
 
 ### `get_dynamodb_table_summary`
 
+*Use when:* triaging a DynamoDB table and you need its metadata without scanning or reading items.
+
 Summarizes one DynamoDB table using metadata APIs only. No scan, query, or item
 read is performed.
 
@@ -492,6 +566,8 @@ Inputs:
 - `region` optional
 
 ### `check_dynamodb_stream_lambda_readiness`
+
+*Use when:* a Lambda isn't consuming a DynamoDB stream and you need stream status, mapping state, and role permission checks.
 
 Checks whether a DynamoDB stream appears ready for Lambda consumption. It
 summarizes stream status, Lambda event source mapping state, batch/window
@@ -509,6 +585,8 @@ Inputs:
 
 ### `list_ecs_clusters`
 
+*Use when:* you need to find which ECS clusters exist before drilling into services.
+
 Lists ECS clusters by ARN and name.
 
 Inputs:
@@ -517,6 +595,8 @@ Inputs:
 - `max_results` optional
 
 ### `list_ecs_services`
+
+*Use when:* you need to enumerate ECS services in a cluster before investigating one.
 
 Lists ECS services in one cluster by ARN and name.
 
@@ -527,6 +607,8 @@ Inputs:
 - `max_results` optional
 
 ### `get_ecs_service_summary`
+
+*Use when:* an ECS service is unhealthy and you need desired/running counts, deployment state, roles, and load balancer wiring.
 
 Summarizes one ECS service and its task definition with desired/running counts,
 deployment state, task and execution roles, containers, log groups, and load
@@ -542,6 +624,8 @@ Inputs:
 
 ### `list_sqs_queues`
 
+*Use when:* you need to find which SQS queues exist before drilling into one.
+
 Lists SQS queue URLs visible to the active AWS credentials. It does not receive
 messages.
 
@@ -552,6 +636,8 @@ Inputs:
 - `max_results` optional
 
 ### `get_sqs_queue_summary`
+
+*Use when:* triaging an SQS queue and you need timing, depth, redrive, and encryption shape without receiving messages.
 
 Summarizes one SQS queue using metadata APIs only. Includes queue ARN, timing
 attributes, approximate message counts, DLQ/redrive configuration, encryption
@@ -564,6 +650,8 @@ Inputs:
 - `region` optional
 
 ### `explain_sqs_queue_dependencies`
+
+*Use when:* triaging an SQS queue and you need its producers, consumers, DLQ links, and inferred permission needs.
 
 Maps one SQS queue into the shared dependency graph shape. It summarizes
 redrive/DLQ relationships, EventBridge rules that target the queue, Lambda event
@@ -579,6 +667,8 @@ Inputs:
 
 ### `check_sqs_to_lambda_delivery`
 
+*Use when:* a Lambda isn't draining its SQS queue and you need mapping, visibility-timeout, and partial-batch hints.
+
 Checks whether an SQS queue appears ready to deliver messages to Lambda event
 source mappings. The result includes mapping state, Lambda timeout vs queue
 visibility timeout, batch partial-failure response, redrive policy, scaling
@@ -593,6 +683,8 @@ Inputs:
 
 ### `investigate_sqs_backlog_stall`
 
+*Use when:* an SQS queue is backed up and you need depth, oldest-message age, mapping state, and the first likely bottleneck.
+
 Correlates SQS backlog signals with Lambda event source mappings and recent
 Lambda throttles. The result includes approximate queue depth and oldest-message
 age, mapping state, visibility-timeout fit, DLQ/redrive and partial-batch
@@ -606,6 +698,8 @@ Inputs:
 - `max_results` optional
 
 ### `analyze_queue_dlq_replay_readiness`
+
+*Use when:* planning a DLQ replay and you need source redrive links, active consumers, retention, and depth.
 
 Checks whether an SQS DLQ appears ready for replay planning. It inspects source
 queue redrive links, active DLQ Lambda consumers, retention, KMS hints, and
@@ -622,6 +716,8 @@ Inputs:
 
 ### `list_sns_topics`
 
+*Use when:* you need to find which SNS topics exist before drilling into one.
+
 Lists SNS topics visible to the active AWS credentials. It does not publish
 messages.
 
@@ -632,6 +728,8 @@ Inputs:
 - `max_results` optional
 
 ### `get_sns_topic_summary`
+
+*Use when:* triaging an SNS topic and you need encryption, policy shape, and bounded subscription summaries.
 
 Summarizes one SNS topic using metadata APIs only. Includes display name,
 encryption shape, delivery-policy presence, topic policy statement count, and
@@ -645,6 +743,8 @@ Inputs:
 - `max_subscriptions` optional
 
 ### `explain_sns_topic_dependencies`
+
+*Use when:* triaging an SNS topic and you need its subscriptions, downstream targets, DLQs, and delivery permission needs.
 
 Maps one SNS topic into the shared dependency graph shape. It summarizes
 subscriptions, downstream Lambda/SQS/HTTP targets, subscription DLQs where
@@ -661,6 +761,8 @@ Inputs:
 
 ### `audit_sns_fanout_delivery_readiness`
 
+*Use when:* you suspect SNS fanout is dropping deliveries and need DLQ, KMS, pending-confirmation, and downstream policy hints.
+
 Audits SNS fanout delivery readiness for one topic. It summarizes subscriptions,
 protocol mix, subscription DLQs, encrypted-topic KMS hints, pending
 confirmations, and downstream Lambda/SQS policy trust. It does not publish
@@ -676,6 +778,8 @@ Inputs:
 
 ### `list_cloudwatch_alarms`
 
+*Use when:* triaging an incident and you need to see which alarms exist, their state, and inferred linked resources.
+
 Lists CloudWatch metric and composite alarms with state, action counts, metric
 shape, dimensions, and inferred linked resource hints for supported namespaces.
 
@@ -687,6 +791,8 @@ Inputs:
 
 ### `get_cloudwatch_alarm_summary`
 
+*Use when:* an alarm fired and you need its state, action shape, and likely linked resource at a glance.
+
 Summarizes one CloudWatch alarm by name, including likely linked Lambda, API
 Gateway, Step Functions, SQS, or EventBridge resources when dimensions identify
 them.
@@ -697,6 +803,8 @@ Inputs:
 - `region` optional
 
 ### `find_cloudwatch_alarm_coverage_gaps`
+
+*Use when:* you suspect a resource is unmonitored and need to know which expected alarms are missing or disabled.
 
 Checks expected alarm coverage for one Lambda, SQS queue, EventBridge rule, or
 API Gateway route. It reports covered and missing metrics, existing alarms with
@@ -715,6 +823,8 @@ Inputs:
 
 ### `list_cloudwatch_log_groups`
 
+*Use when:* you need to find the right CloudWatch log group before searching or querying logs.
+
 Lists CloudWatch log groups visible to the active AWS credentials.
 
 Inputs:
@@ -724,6 +834,8 @@ Inputs:
 - `max_results` optional
 
 ### `search_cloudwatch_logs`
+
+*Use when:* you need a quick filter-pattern search of one log group with bounded, redacted event summaries.
 
 Searches one CloudWatch log group with bounded `filter_log_events`. Results are
 truncated and returned as concise event summaries.
@@ -737,6 +849,8 @@ Inputs:
 - `region` optional
 
 ### `query_cloudwatch_logs_insights`
+
+*Use when:* you need a structured Logs Insights query against one log group with clamped time, results, and redacted fields.
 
 Runs a bounded CloudWatch Logs Insights query against one explicitly provided
 log group. The tool clamps the time window and result count, rejects broad
@@ -753,6 +867,8 @@ Inputs:
 
 ### `check_cloudwatch_logs_writeability`
 
+*Use when:* you suspect logs aren't being written and need to confirm a role can create streams and put events.
+
 Checks whether one IAM role appears able to write to one CloudWatch Logs log
 group. The result reports whether the log group exists, retention/KMS context,
 and IAM simulation decisions for `logs:CreateLogStream` and
@@ -768,6 +884,8 @@ Inputs:
 
 ### `list_api_gateways`
 
+*Use when:* you need to find which API Gateway REST, HTTP, or WebSocket APIs exist before drilling into one.
+
 Lists API Gateway REST, HTTP, and WebSocket APIs visible to the active AWS
 credentials.
 
@@ -778,6 +896,8 @@ Inputs:
 - `max_results` optional
 
 ### `get_api_gateway_summary`
+
+*Use when:* triaging an API and you need resource, method, or route counts without invoking it.
 
 Summarizes one API Gateway API without invoking it. REST APIs include resource
 and method counts; HTTP/WebSocket APIs include route counts.
@@ -790,6 +910,8 @@ Inputs:
 
 ### `get_api_gateway_authorizer_summary`
 
+*Use when:* triaging API auth and you need authorizer types, identity sources, and route-to-authorizer wiring.
+
 Summarizes REST and HTTP/WebSocket API authorizers without returning secrets.
 Includes authorizer type, identity sources, Lambda authorizer target metadata,
 and route-to-authorizer relationships.
@@ -801,6 +923,8 @@ Inputs:
 - `region` optional
 
 ### `analyze_api_gateway_authorizer_failures`
+
+*Use when:* callers are getting 401/403 from API Gateway and you need authorizer config, TTL, and Lambda authorizer error context.
 
 Analyzes API Gateway authorizer 401/403 risks without invoking the API. It
 checks route authorization config, authorizer type, identity sources, Lambda
@@ -817,6 +941,8 @@ Inputs:
 
 ### `explain_api_gateway_dependencies`
 
+*Use when:* triaging an API and you need its route-to-integration edges and Lambda invoke-permission posture.
+
 Maps one API Gateway API into route and integration dependencies without
 invoking it. The tool supports REST, HTTP, and WebSocket APIs, extracts route to
 integration edges, detects Lambda targets, and summarizes whether each target
@@ -830,6 +956,8 @@ Inputs:
 - `region` optional
 
 ### `investigate_api_gateway_route`
+
+*Use when:* one API Gateway route is failing and you need integration, Lambda permission, config, and recent errors in one shot.
 
 Diagnoses one API Gateway route without invoking it. The tool finds the route,
 summarizes its integration, checks Lambda invoke permission when the target is
@@ -852,6 +980,8 @@ Inputs:
 
 ### `list_eventbridge_rules`
 
+*Use when:* you need to find which EventBridge rules exist across event buses before drilling into one.
+
 Lists EventBridge rules visible to the active AWS credentials. When no event bus
 is provided, the tool discovers event buses first, then returns rules with
 target counts and target service types.
@@ -865,6 +995,8 @@ Inputs:
 
 ### `get_eventbridge_time_sources`
 
+*Use when:* a scheduled or replayed event misfired and you need to see scheduled rules, Scheduler schedules, archives, and replays.
+
 Summarizes time-driven and replay-driven EventBridge sources without publishing
 or replaying events. Includes scheduled rules, Scheduler schedules, archives,
 and replays where visible.
@@ -876,6 +1008,8 @@ Inputs:
 - `max_results` optional
 
 ### `explain_eventbridge_rule_dependencies`
+
+*Use when:* triaging an EventBridge rule and you need its bus, targets, DLQ, role, and target permission posture.
 
 Maps one EventBridge rule into event bus, target, DLQ, role, and permission
 dependencies. It summarizes event patterns safely, detects target service types,
@@ -893,6 +1027,8 @@ Inputs:
 
 ### `investigate_eventbridge_rule_delivery`
 
+*Use when:* an EventBridge rule isn't delivering and you need config, permissions, AWS/Events metrics, and DLQ context together.
+
 Diagnoses one EventBridge rule using configuration, target permissions,
 CloudWatch `AWS/Events` metrics, and SQS DLQ metadata where available. It does
 not read DLQ messages. Findings are grouped into configuration, permission, and
@@ -908,6 +1044,8 @@ Inputs:
 
 ### `audit_eventbridge_target_retry_dlq_safety`
 
+*Use when:* you suspect an EventBridge rule is silently dropping events and need retry, DLQ, and failed-invocation safety hints.
+
 Audits one EventBridge rule's target retry policy and DLQ safety. It summarizes
 maximum retry attempts, maximum event age, DLQ queue-policy and KMS hints,
 failed-invocation and failed-to-DLQ metrics, and likely silent-drop edges. It
@@ -922,6 +1060,8 @@ Inputs:
 - `since_minutes` optional, default `60`
 
 ### `explain_event_driven_flow`
+
+*Use when:* you know a workload name, event source, or detail type from producer code but don't know which EventBridge rule fires.
 
 Stitches EventBridge, Step Functions, and Lambda dependency tools into one
 developer-intent view. Use it when you know a workload name, event source,
@@ -948,6 +1088,8 @@ Inputs:
 
 ### `diagnose_region_partition_mismatches`
 
+*Use when:* you suspect an ARN, URL, or endpoint points at the wrong region or partition and want fast mismatch findings.
+
 Checks explicit resource references and configured endpoint overrides for
 region or partition drift. The tool parses ARNs and AWS-style URLs, including
 SQS queue URLs and service endpoint hosts, then reports mismatches against the
@@ -965,6 +1107,8 @@ Inputs:
 
 ### `search_aws_resources`
 
+*Use when:* you don't know which service is broken and need a name-based sweep across Lambda, Step Functions, S3, DynamoDB, logs, API Gateway, and EventBridge.
+
 Best-effort name search across safe discovery tools for Lambda, Step Functions,
 S3 buckets, DynamoDB tables, CloudWatch log groups, API Gateway APIs, and
 EventBridge rules. This is not a raw AWS API passthrough.
@@ -977,6 +1121,8 @@ Inputs:
 - `max_results` optional
 
 ### `search_aws_resources_by_tag`
+
+*Use when:* you need to find all resources sharing a tag key or value across services as a starting point.
 
 Searches tagged resources with the Resource Groups Tagging API and groups
 matches by service and resource type. The result returns bounded ARN metadata
@@ -992,6 +1138,8 @@ Inputs:
 
 ### `get_cross_service_incident_brief`
 
+*Use when:* you don't know which service is broken and need matching resources, alarms, and Lambda error context in one brief.
+
 Builds a compact incident brief from existing safe tools using a resource name
 fragment. The result includes matching resources, matching CloudWatch alarms,
 bounded Lambda recent-error/dependency context when applicable, and suggested
@@ -1004,6 +1152,8 @@ Inputs:
 - `max_matches` optional
 
 ### `build_log_signal_correlation_timeline`
+
+*Use when:* an incident is ongoing and you need ordered symptoms and a likely first-failure point across alarms and Lambda errors.
 
 Builds a bounded timeline from matching CloudWatch alarms and Lambda recent
 error groups using existing safe diagnostic tools. It returns ordered symptoms,
@@ -1018,6 +1168,8 @@ Inputs:
 
 ### `plan_end_to_end_transaction_trace`
 
+*Use when:* you don't know which service is broken and want an ordered investigation plan from a seed resource across the request path.
+
 Builds an ordered investigation plan from a seed resource name. It reuses the
 cross-service incident brief, orders likely resources across the request path,
 and returns probable breakpoints and next checks.
@@ -1030,6 +1182,8 @@ Inputs:
 
 ### `get_risk_scored_dependency_health_summary`
 
+*Use when:* you need a ranked health view of an application's resources by callability and observability follow-up needs.
+
 Searches resources by application prefix and assigns a bounded risk score based
 on service-specific callability and observability follow-up needs.
 
@@ -1040,6 +1194,8 @@ Inputs:
 - `max_matches` optional
 
 ### `export_application_dependency_graph`
+
+*Use when:* you don't know which service is broken and need a redacted nodes/edges graph for an application prefix.
 
 Exports a redacted dependency graph for resources matching an application
 prefix. It uses safe discovery results and existing dependency edges where
@@ -1053,6 +1209,8 @@ Inputs:
 - `max_matches` optional
 
 ### `run_first_blocked_edge_incident`
+
+*Use when:* you don't know which service is broken and want to stop at the first blocked or unknown high-confidence edge from a seed and symptom.
 
 Runs existing safe diagnostics from a seed resource and symptom, then stops at
 the first blocked or unknown high-confidence edge. It returns checked edges,
@@ -1068,6 +1226,8 @@ Inputs:
 
 ### `analyze_resource_policy_condition_mismatches`
 
+*Use when:* you suspect a resource policy is permissive or mis-scoped and want wildcard, missing source, and ARN/account drift flags.
+
 Analyzes redacted resource-policy condition summaries for expected source and
 target ARNs. It flags wildcard overreach, missing source constraints, and source
 ARN/account mismatches without returning raw policy documents.
@@ -1080,6 +1240,8 @@ Inputs:
 
 ### `audit_multi_region_drift_failover_readiness`
 
+*Use when:* planning failover and you need to flag missing regional peers and region-encoded name drift across two or more regions.
+
 Compares discovered application resources across two or more regions. It flags
 missing regional peers and region-encoded name drift without performing failover
 actions, reading payloads, or returning raw policy documents.
@@ -1091,6 +1253,8 @@ Inputs:
 - `max_matches` optional
 
 ### `generate_application_health_narrative`
+
+*Use when:* you don't know which service is broken and need an incident-ready narrative with ranked risks and follow-up tools.
 
 Combines dependency graph, risk score, and recent signal timeline diagnostics
 into an incident-ready narrative. It returns an executive summary, ranked
