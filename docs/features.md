@@ -252,6 +252,9 @@ Related tools:
 - Investigate SQS backlog stalls by correlating queue depth and age, Lambda
   mappings, visibility timeout, DLQ redrive, partial batch response, and Lambda
   throttles without receiving messages.
+- Analyze SQS DLQ replay readiness by checking source redrive links, active DLQ
+  consumers, retention, KMS hints, and approximate depth without reading or
+  replaying messages.
 - List SNS topics and summarize topic metadata without publishing messages.
 - Inspect SNS display name, encryption shape, delivery-policy presence, topic
   policy statement count, and bounded safe subscription endpoint summaries.
@@ -276,6 +279,7 @@ Related tools:
 - `explain_sqs_queue_dependencies`
 - `check_sqs_to_lambda_delivery`
 - `investigate_sqs_backlog_stall`
+- `analyze_queue_dlq_replay_readiness`
 - `list_sns_topics`
 - `get_sns_topic_summary`
 - `explain_sns_topic_dependencies`

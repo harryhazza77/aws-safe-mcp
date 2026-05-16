@@ -177,6 +177,9 @@ from aws_safe_mcp.tools.sns import (
 from aws_safe_mcp.tools.sns import get_sns_topic_summary as get_sns_topic_summary_tool
 from aws_safe_mcp.tools.sns import list_sns_topics as list_sns_topics_tool
 from aws_safe_mcp.tools.sqs import (
+    analyze_queue_dlq_replay_readiness as analyze_queue_dlq_replay_readiness_tool,
+)
+from aws_safe_mcp.tools.sqs import (
     check_sqs_to_lambda_delivery as check_sqs_to_lambda_delivery_tool,
 )
 from aws_safe_mcp.tools.sqs import (
@@ -862,6 +865,23 @@ def _register_sqs_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
         return investigate_sqs_backlog_stall_tool(
             runtime,
             queue_url=queue_url,
+            region=region,
+            max_results=max_results,
+        )
+
+    @mcp.tool()
+    @audit.tool("analyze_queue_dlq_replay_readiness")
+    def analyze_queue_dlq_replay_readiness(
+        dlq_queue_url: str,
+        source_queue_urls: list[str] | None = None,
+        region: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """Inspect whether an SQS DLQ replay appears safe before any replay action."""
+        return analyze_queue_dlq_replay_readiness_tool(
+            runtime,
+            dlq_queue_url=dlq_queue_url,
+            source_queue_urls=source_queue_urls,
             region=region,
             max_results=max_results,
         )

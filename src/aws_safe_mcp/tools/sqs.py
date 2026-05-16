@@ -215,6 +215,48 @@ def investigate_sqs_backlog_stall(
     }
 
 
+def analyze_queue_dlq_replay_readiness(
+    runtime: AwsRuntime,
+    dlq_queue_url: str,
+    source_queue_urls: list[str] | None = None,
+    region: str | None = None,
+    max_results: int | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    dlq = get_sqs_queue_summary(runtime, dlq_queue_url, region=resolved_region)
+    dlq_arn = dlq.get("queue_arn")
+    if not isinstance(dlq_arn, str) or not dlq_arn:
+        raise ToolInputError("DLQ queue does not expose QueueArn")
+    limit = clamp_limit(
+        max_results,
+        default=20,
+        configured_max=runtime.config.max_results,
+        label="max_results",
+    )
+    warnings: list[str] = []
+    consumers = _lambda_mappings_for_queue(runtime, resolved_region, dlq_arn, limit, warnings)
+    source_summaries = [
+        get_sqs_queue_summary(runtime, url, region=resolved_region)
+        for url in (source_queue_urls or [])
+    ][:limit]
+    signals = _dlq_replay_signals(dlq, source_summaries, consumers)
+    return {
+        "dlq_queue_url": dlq["queue_url"],
+        "dlq_queue_name": dlq["queue_name"],
+        "dlq_queue_arn": dlq_arn,
+        "region": resolved_region,
+        "summary": _dlq_replay_summary(signals),
+        "dlq": dlq,
+        "source_queues": source_summaries,
+        "consumer_mappings": consumers,
+        "signals": signals,
+        "suggested_next_checks": _dlq_replay_next_checks(signals),
+        "messages_returned": False,
+        "replay_performed": False,
+        "warnings": warnings,
+    }
+
+
 def check_sqs_to_lambda_delivery(
     runtime: AwsRuntime,
     queue_url: str,
@@ -689,6 +731,90 @@ def _sqs_backlog_stall_next_checks(signals: dict[str, Any]) -> list[str]:
     if not checks:
         checks.append("No static SQS backlog stall signal found.")
     return checks
+
+
+def _dlq_replay_signals(
+    dlq: dict[str, Any],
+    source_queues: list[dict[str, Any]],
+    consumers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    dlq_arn = dlq.get("queue_arn")
+    counts = dlq.get("message_counts") or {}
+    source_links = [
+        {
+            "queue_name": source.get("queue_name"),
+            "queue_arn": source.get("queue_arn"),
+            "redrives_to_dlq": (source.get("dead_letter") or {}).get(
+                "dead_letter_target_arn"
+            )
+            == dlq_arn,
+        }
+        for source in source_queues
+    ]
+    risks = []
+    cautions = []
+    if counts.get("available", 0) == 0:
+        cautions.append("dlq_currently_empty")
+    if not source_links:
+        cautions.append("source_queue_mapping_not_provided")
+    elif any(not item["redrives_to_dlq"] for item in source_links):
+        risks.append("source_queue_not_configured_for_dlq")
+    if consumers:
+        risks.append("dlq_has_active_lambda_consumer")
+    if (dlq.get("message_retention_seconds") or 0) < 86400:
+        cautions.append("short_message_retention")
+    if (dlq.get("encryption") or {}).get("kms_master_key_id"):
+        cautions.append("kms_permissions_should_be_checked")
+    return {
+        "approximate_depth": counts.get("available"),
+        "oldest_age_seconds": counts.get("oldest_age_seconds"),
+        "source_links": source_links,
+        "consumer_count": len(consumers),
+        "risks": risks,
+        "cautions": cautions,
+    }
+
+
+def _dlq_replay_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    risks = signals["risks"]
+    cautions = signals["cautions"]
+    if risks:
+        status = "not_ready"
+    elif cautions:
+        status = "check_first"
+    else:
+        status = "likely_ready"
+    return {
+        "status": status,
+        "risk_count": len(risks),
+        "caution_count": len(cautions),
+        "first_edge_to_check": _dlq_replay_first_edge(signals),
+    }
+
+
+def _dlq_replay_first_edge(signals: dict[str, Any]) -> str:
+    if "source_queue_not_configured_for_dlq" in signals["risks"]:
+        return "source_queue_redrive_policy"
+    if "dlq_has_active_lambda_consumer" in signals["risks"]:
+        return "dlq_consumer_mapping"
+    if "kms_permissions_should_be_checked" in signals["cautions"]:
+        return "kms_key_permissions"
+    if "source_queue_mapping_not_provided" in signals["cautions"]:
+        return "source_queue_mapping"
+    return "retention_and_depth"
+
+
+def _dlq_replay_next_checks(signals: dict[str, Any]) -> list[str]:
+    first_edge = _dlq_replay_first_edge(signals)
+    if first_edge == "source_queue_redrive_policy":
+        return ["Confirm source queues redrive to this DLQ before replay."]
+    if first_edge == "dlq_consumer_mapping":
+        return ["Disable or account for active DLQ consumers before replay planning."]
+    if first_edge == "kms_key_permissions":
+        return ["Check KMS key policy and replay principal permissions."]
+    if first_edge == "source_queue_mapping":
+        return ["Provide source queue URLs to verify redrive relationships."]
+    return ["Check message age, retention, and target consumer capacity before replay."]
 
 
 def _queue_policy_document(

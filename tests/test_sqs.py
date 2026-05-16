@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.sqs import (
+    analyze_queue_dlq_replay_readiness,
     check_sqs_to_lambda_delivery,
     explain_sqs_queue_dependencies,
     get_sqs_queue_summary,
@@ -243,6 +244,20 @@ def test_check_sqs_to_lambda_delivery_reports_ready_mapping() -> None:
     assert result["mappings"][0]["timeout_ratio_ok"] is True
     assert result["mappings"][0]["partial_batch_response_enabled"] is True
     assert result["signals"]["queue_redrive_configured"] is True
+
+
+def test_analyze_queue_dlq_replay_readiness_reports_no_message_reads() -> None:
+    result = analyze_queue_dlq_replay_readiness(
+        FakeRuntime(),
+        "https://sqs.eu-west-2.amazonaws.com/123456789012/dev-work",
+        source_queue_urls=["https://sqs.eu-west-2.amazonaws.com/123456789012/dev-source"],
+    )
+
+    assert result["summary"]["status"] == "not_ready"
+    assert result["summary"]["first_edge_to_check"] == "source_queue_redrive_policy"
+    assert result["signals"]["consumer_count"] == 1
+    assert result["messages_returned"] is False
+    assert result["replay_performed"] is False
 
 
 def test_check_sqs_to_lambda_delivery_flags_timeout_and_batch_risks() -> None:

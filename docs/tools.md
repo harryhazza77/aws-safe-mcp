@@ -605,6 +605,19 @@ Inputs:
 - `region` optional
 - `max_results` optional
 
+### `analyze_queue_dlq_replay_readiness`
+
+Checks whether an SQS DLQ appears ready for replay planning. It inspects source
+queue redrive links, active DLQ Lambda consumers, retention, KMS hints, and
+approximate depth without receiving, returning, or replaying messages.
+
+Inputs:
+
+- `dlq_queue_url` required
+- `source_queue_urls` optional
+- `region` optional
+- `max_results` optional
+
 ## SNS
 
 ### `list_sns_topics`

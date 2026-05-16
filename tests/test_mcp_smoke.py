@@ -95,6 +95,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "explain_sqs_queue_dependencies",
         "check_sqs_to_lambda_delivery",
         "investigate_sqs_backlog_stall",
+        "analyze_queue_dlq_replay_readiness",
         "list_sns_topics",
         "get_sns_topic_summary",
         "explain_sns_topic_dependencies",

@@ -30,14 +30,7 @@ current public tool surface in `src/aws_safe_mcp/server.py` and
 `src/aws_safe_mcp/tools/*`; scopes focus on new diagnostic value beyond existing
 single-resource summaries, dependency graphs, and permission checks.
 
-1. **Queue/DLQ replay readiness analyzer** _(Large)_
-    - For SQS DLQs and Lambda/EventBridge failure destinations, inspect redrive
-      policy, source queue mapping, consumer presence, retention, KMS hints, and
-      approximate age/depth.
-    - Explain whether replay is likely safe and what edge must be checked first
-      without reading or replaying messages.
-
-2. **Application health narrative generator** _(XLarge)_
+1. **Application health narrative generator** _(XLarge)_
     - Combine dependency graph, risk scores, alarm gaps, retry topology,
       callability proofs, network reachability, and recent failure signals into
       a concise incident-ready narrative.
