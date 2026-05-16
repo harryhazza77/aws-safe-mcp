@@ -87,6 +87,8 @@ Related tools:
 - Infer AWS API targets from redacted Lambda URL environment hints and report
   whether matching VPC endpoints, private DNS, endpoint policy presence, and
   endpoint security groups make private AWS API access plausible.
+- Simulate Lambda security-group paths to a target CIDR and port, including
+  Lambda egress and optional target security-group ingress from Lambda subnets.
 - Check whether a Lambda execution role appears allowed to perform a specific
   IAM action on a specific resource ARN.
 - Check whether one Lambda appears able to send messages to one SQS queue,
@@ -107,6 +109,7 @@ Related tools:
 - `audit_async_lambda_failure_path`
 - `explain_lambda_dependencies`
 - `explain_lambda_network_access`
+- `simulate_lambda_security_group_path`
 - `check_lambda_permission_path`
 - `check_lambda_to_sqs_sendability`
 - `prove_lambda_invocation_path`

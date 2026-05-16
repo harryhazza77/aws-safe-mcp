@@ -93,6 +93,9 @@ from aws_safe_mcp.tools.lambda_tools import (
 from aws_safe_mcp.tools.lambda_tools import (
     prove_lambda_invocation_path as prove_lambda_invocation_path_tool,
 )
+from aws_safe_mcp.tools.lambda_tools import (
+    simulate_lambda_security_group_path as simulate_lambda_security_group_path_tool,
+)
 from aws_safe_mcp.tools.resource_search import (
     diagnose_region_partition_mismatches as diagnose_region_partition_mismatches_tool,
 )
@@ -367,6 +370,25 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
             function_name=function_name,
             region=region,
             target_url=target_url,
+        )
+
+    @mcp.tool()
+    @audit.tool("simulate_lambda_security_group_path")
+    def simulate_lambda_security_group_path(
+        function_name: str,
+        target_cidr: str,
+        target_port: int,
+        target_security_group_id: str | None = None,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Simulate Lambda security-group egress and optional target ingress."""
+        return simulate_lambda_security_group_path_tool(
+            runtime,
+            function_name=function_name,
+            target_cidr=target_cidr,
+            target_port=target_port,
+            target_security_group_id=target_security_group_id,
+            region=region,
         )
 
     @mcp.tool()

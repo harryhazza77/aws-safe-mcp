@@ -22,6 +22,7 @@ from aws_safe_mcp.tools.lambda_tools import (
     investigate_lambda_failure,
     list_lambda_functions,
     prove_lambda_invocation_path,
+    simulate_lambda_security_group_path,
 )
 
 
@@ -386,7 +387,10 @@ class FakeEc2Client:
         network_acls: list[dict[str, Any]] | None = None,
         endpoints: list[dict[str, Any]] | None = None,
     ) -> None:
-        self.subnets = subnets or [{"SubnetId": "subnet-1"}, {"SubnetId": "subnet-2"}]
+        self.subnets = subnets or [
+            {"SubnetId": "subnet-1", "CidrBlock": "10.0.1.0/24"},
+            {"SubnetId": "subnet-2", "CidrBlock": "10.0.2.0/24"},
+        ]
         self.security_groups = security_groups or [
             {
                 "GroupId": "sg-1",
@@ -847,6 +851,74 @@ def test_explain_lambda_network_access_reports_private_aws_api_endpoint() -> Non
 def test_explain_lambda_network_access_validates_target_url() -> None:
     with pytest.raises(ToolInputError, match="target_url must be"):
         explain_lambda_network_access(FakeRuntime(), "dev-api", target_url="ftp://example.com")
+
+
+def test_simulate_lambda_security_group_path_checks_egress_and_ingress() -> None:
+    runtime = FakeRuntime()
+    runtime.ec2_client = FakeEc2Client(
+        security_groups=[
+            {
+                "GroupId": "sg-1",
+                "GroupName": "lambda-egress",
+                "IpPermissionsEgress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 5432,
+                        "ToPort": 5432,
+                        "IpRanges": [{"CidrIp": "10.0.10.0/24"}],
+                    }
+                ],
+            },
+            {
+                "GroupId": "sg-db",
+                "GroupName": "db",
+                "IpPermissions": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 5432,
+                        "ToPort": 5432,
+                        "IpRanges": [{"CidrIp": "10.0.0.0/16"}],
+                    }
+                ],
+            },
+        ]
+    )
+
+    result = simulate_lambda_security_group_path(
+        runtime,
+        "dev-api",
+        target_cidr="10.0.10.12/32",
+        target_port=5432,
+        target_security_group_id="sg-db",
+    )
+
+    assert result["summary"] == {"status": "likely_reachable", "blockers": []}
+    assert result["egress"]["allowed"] is True
+    assert result["ingress"]["allowed"] is True
+    assert result["lambda_network"]["subnet_cidrs"] == ["10.0.1.0/24", "10.0.2.0/24"]
+
+
+def test_simulate_lambda_security_group_path_reports_blockers() -> None:
+    result = simulate_lambda_security_group_path(
+        FakeRuntime(),
+        "dev-api",
+        target_cidr="172.16.10.10/32",
+        target_port=5432,
+    )
+
+    assert result["summary"] == {
+        "status": "blocked",
+        "blockers": ["lambda_security_group_egress"],
+    }
+    assert result["ingress"]["checked"] is False
+
+
+def test_simulate_lambda_security_group_path_validates_inputs() -> None:
+    with pytest.raises(ToolInputError, match="target_cidr must be"):
+        simulate_lambda_security_group_path(FakeRuntime(), "dev-api", "not-cidr", 443)
+
+    with pytest.raises(ToolInputError, match="target_port must be"):
+        simulate_lambda_security_group_path(FakeRuntime(), "dev-api", "10.0.0.0/16", 0)
 
 
 def test_explain_lambda_network_access_reports_mixed_subnet_routes() -> None:

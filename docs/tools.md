@@ -215,6 +215,20 @@ Inputs:
 - `region` optional
 - `target_url` optional
 
+### `simulate_lambda_security_group_path`
+
+Simulates whether a Lambda's security groups allow egress to a target CIDR and
+port. When a target security group is supplied, the tool also checks whether
+that group allows ingress from the Lambda subnet CIDRs on the same port.
+
+Inputs:
+
+- `function_name` required
+- `target_cidr` required
+- `target_port` required
+- `target_security_group_id` optional
+- `region` optional
+
 ### `check_lambda_permission_path`
 
 Checks whether one Lambda execution role appears allowed to perform one IAM

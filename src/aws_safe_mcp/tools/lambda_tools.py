@@ -499,6 +499,89 @@ def explain_lambda_network_access(
     return result
 
 
+def simulate_lambda_security_group_path(
+    runtime: AwsRuntime,
+    function_name: str,
+    target_cidr: str,
+    target_port: int,
+    target_security_group_id: str | None = None,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_name = require_lambda_name(function_name)
+    required_cidr = _require_cidr(target_cidr)
+    required_port = _require_port(target_port)
+    lambda_client = runtime.client("lambda", region=resolved_region)
+    try:
+        config = lambda_client.get_function_configuration(FunctionName=required_name)
+    except (BotoCoreError, ClientError) as exc:
+        raise normalize_aws_error(exc, "lambda.GetFunctionConfiguration") from exc
+    vpc_config = config.get("VpcConfig", {})
+    subnet_ids = list(vpc_config.get("SubnetIds", [])) if isinstance(vpc_config, dict) else []
+    security_group_ids = (
+        list(vpc_config.get("SecurityGroupIds", [])) if isinstance(vpc_config, dict) else []
+    )
+    vpc_id = str(vpc_config.get("VpcId") or "") if isinstance(vpc_config, dict) else ""
+    if not vpc_id:
+        return {
+            "function_name": required_name,
+            "region": resolved_region,
+            "target": {"cidr": required_cidr, "port": required_port},
+            "summary": {"status": "not_applicable", "reason": "lambda_not_in_vpc"},
+            "egress": {"allowed": None, "matched_rules": []},
+            "ingress": {"checked": False, "allowed": None, "matched_rules": []},
+        }
+    ec2_client = runtime.client("ec2", region=resolved_region)
+    try:
+        subnets = ec2_client.describe_subnets(SubnetIds=subnet_ids).get("Subnets", [])
+        lambda_groups = ec2_client.describe_security_groups(GroupIds=security_group_ids).get(
+            "SecurityGroups", []
+        )
+        target_groups = (
+            ec2_client.describe_security_groups(GroupIds=[target_security_group_id]).get(
+                "SecurityGroups", []
+            )
+            if target_security_group_id
+            else []
+        )
+    except (BotoCoreError, ClientError) as exc:
+        raise normalize_aws_error(exc, "ec2.DescribeSecurityGroupPath") from exc
+    egress_matches = _matching_egress_rules(lambda_groups, required_cidr, required_port)
+    ingress_matches = _matching_ingress_rules(
+        target_groups,
+        _subnet_cidrs(subnets),
+        required_port,
+    )
+    ingress_checked = bool(target_security_group_id)
+    status = _security_group_path_status(
+        bool(egress_matches),
+        ingress_checked,
+        bool(ingress_matches),
+    )
+    return {
+        "function_name": required_name,
+        "region": resolved_region,
+        "target": {
+            "cidr": required_cidr,
+            "port": required_port,
+            "security_group_id": target_security_group_id,
+        },
+        "lambda_network": {
+            "vpc_id": vpc_id,
+            "subnet_ids": subnet_ids,
+            "security_group_ids": security_group_ids,
+            "subnet_cidrs": _subnet_cidrs(subnets),
+        },
+        "summary": status,
+        "egress": {"allowed": bool(egress_matches), "matched_rules": egress_matches},
+        "ingress": {
+            "checked": ingress_checked,
+            "allowed": bool(ingress_matches) if ingress_checked else None,
+            "matched_rules": ingress_matches,
+        },
+    }
+
+
 def check_lambda_permission_path(
     runtime: AwsRuntime,
     function_name: str,
@@ -1342,6 +1425,62 @@ def _matching_egress_rules(
                 if cidr and _cidr_allows_destination(cidr, destination_cidr):
                     matches.append(f"{group_id} {rule.get('IpProtocol')} {cidr}")
     return matches
+
+
+def _matching_ingress_rules(
+    security_groups: list[dict[str, Any]],
+    source_cidrs: list[str],
+    port: int,
+) -> list[str]:
+    matches: list[str] = []
+    for group in security_groups:
+        group_id = str(group.get("GroupId") or "unknown-security-group")
+        for rule in group.get("IpPermissions", []):
+            if not _permission_allows_port(rule, port):
+                continue
+            for ip_range in rule.get("IpRanges", []):
+                cidr = str(ip_range.get("CidrIp") or "")
+                if cidr and any(_cidr_allows_destination(cidr, source) for source in source_cidrs):
+                    matches.append(f"{group_id} {rule.get('IpProtocol')} {cidr}")
+    return matches
+
+
+def _subnet_cidrs(subnets: list[dict[str, Any]]) -> list[str]:
+    return sorted(str(subnet.get("CidrBlock")) for subnet in subnets if subnet.get("CidrBlock"))
+
+
+def _require_cidr(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ToolInputError("target_cidr is required")
+    try:
+        ipaddress.ip_network(normalized, strict=False)
+    except ValueError as exc:
+        raise ToolInputError("target_cidr must be an IPv4 or IPv6 CIDR") from exc
+    return normalized
+
+
+def _require_port(value: int) -> int:
+    port = int(value)
+    if port < 1 or port > 65535:
+        raise ToolInputError("target_port must be between 1 and 65535")
+    return port
+
+
+def _security_group_path_status(
+    egress_allowed: bool,
+    ingress_checked: bool,
+    ingress_allowed: bool,
+) -> dict[str, Any]:
+    blockers: list[str] = []
+    if not egress_allowed:
+        blockers.append("lambda_security_group_egress")
+    if ingress_checked and not ingress_allowed:
+        blockers.append("target_security_group_ingress")
+    return {
+        "status": "blocked" if blockers else "likely_reachable",
+        "blockers": blockers,
+    }
 
 
 def _permission_allows_port(permission: dict[str, Any], port: int) -> bool:
