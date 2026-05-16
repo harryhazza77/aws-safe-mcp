@@ -799,6 +799,49 @@ def test_explain_lambda_network_access_classifies_explicit_url_block() -> None:
         "verdict": "blocked",
         "reason": "network_summary_blocks_path",
     }
+    assert result["aws_api_reachability"]["summary"]["status"] == "blocked"
+    assert result["aws_api_reachability"]["checks"][0]["service"] == "sqs"
+
+
+def test_explain_lambda_network_access_reports_private_aws_api_endpoint() -> None:
+    runtime = FakeRuntime()
+    runtime.ec2_client = FakeEc2Client(
+        route_tables=[
+            {
+                "RouteTableId": "rtb-isolated",
+                "Associations": [{"SubnetId": "subnet-1"}, {"SubnetId": "subnet-2"}],
+                "Routes": [{"DestinationCidrBlock": "10.0.0.0/16", "GatewayId": "local"}],
+            }
+        ],
+        endpoints=[
+            {
+                "VpcEndpointId": "vpce-sqs",
+                "VpcEndpointType": "Interface",
+                "ServiceName": "com.amazonaws.eu-west-2.sqs",
+                "State": "available",
+                "PrivateDnsEnabled": True,
+                "PolicyDocument": "{}",
+                "Groups": [{"GroupId": "sg-1"}],
+            }
+        ],
+    )
+
+    result = explain_lambda_network_access(runtime, "dev-api")
+
+    assert result["aws_api_reachability"]["summary"] == {
+        "status": "private_endpoints_ready",
+        "blocked_service_count": 0,
+        "public_route_service_count": 0,
+    }
+    assert result["aws_api_reachability"]["checks"][0] == {
+        "service": "sqs",
+        "status": "private_endpoint_ready",
+        "endpoint_id": "vpce-sqs",
+        "endpoint_type": "Interface",
+        "private_dns_enabled": True,
+        "policy_configured": True,
+        "security_group_count": 1,
+    }
 
 
 def test_explain_lambda_network_access_validates_target_url() -> None:

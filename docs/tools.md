@@ -202,7 +202,9 @@ non-VPC Lambdas, it reports AWS-managed runtime networking. The result uses the
 contract in [Lambda network access contract](lambda-network-access.md). When
 `target_url` is supplied, the tool classifies that URL as public internet,
 private DNS/network, or AWS service endpoint and maps it to the inferred egress
-posture. It also reports redacted URL-like environment targets by key only.
+posture. It also reports redacted URL-like environment targets by key only and
+summarizes inferred AWS API reachability through VPC endpoints, private DNS,
+endpoint policy presence, endpoint security groups, or public egress fallback.
 
 This tool reports network-layer possibility, not proof that function code
 actually calls a destination.

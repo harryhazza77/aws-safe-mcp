@@ -84,6 +84,9 @@ Related tools:
 - Trace inferred Lambda network reachability from static VPC configuration,
   including target-aware URL classification for explicit URLs and redacted
   URL-like environment values.
+- Infer AWS API targets from redacted Lambda URL environment hints and report
+  whether matching VPC endpoints, private DNS, endpoint policy presence, and
+  endpoint security groups make private AWS API access plausible.
 - Check whether a Lambda execution role appears allowed to perform a specific
   IAM action on a specific resource ARN.
 - Check whether one Lambda appears able to send messages to one SQS queue,

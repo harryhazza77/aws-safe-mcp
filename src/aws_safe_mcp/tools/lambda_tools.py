@@ -456,6 +456,7 @@ def explain_lambda_network_access(
             env_url_targets=env_url_targets,
             network_result=result,
         )
+        result["aws_api_reachability"] = _lambda_aws_api_reachability(env_url_targets, result)
         return result
 
     ec2_client = runtime.client("ec2", region=resolved_region)
@@ -494,6 +495,7 @@ def explain_lambda_network_access(
         env_url_targets=env_url_targets,
         network_result=result,
     )
+    result["aws_api_reachability"] = _lambda_aws_api_reachability(env_url_targets, result)
     return result
 
 
@@ -954,6 +956,71 @@ def _reachability_from_summary(value: str) -> dict[str, str]:
     return {"verdict": "unknown", "reason": "network_summary_unknown"}
 
 
+def _lambda_aws_api_reachability(
+    env_url_targets: list[dict[str, Any]],
+    network_result: dict[str, Any],
+) -> dict[str, Any]:
+    services = sorted(
+        {
+            str(target.get("service"))
+            for target in env_url_targets
+            if target.get("target_class") == "aws_service_endpoint" and target.get("service")
+        }
+    )
+    endpoints = network_result.get("controls", {}).get("endpoints", [])
+    checks = [
+        _lambda_aws_api_service_reachability(service, endpoints, network_result)
+        for service in services
+    ]
+    blocked = [check for check in checks if check["status"] == "blocked"]
+    public_route = [check for check in checks if check["status"] == "public_route_required"]
+    return {
+        "inferred_service_count": len(services),
+        "inferred_services": services,
+        "checks": checks,
+        "summary": {
+            "status": "blocked"
+            if blocked
+            else "public_route_required"
+            if public_route
+            else "private_endpoints_ready"
+            if checks
+            else "no_aws_api_targets_detected",
+            "blocked_service_count": len(blocked),
+            "public_route_service_count": len(public_route),
+        },
+    }
+
+
+def _lambda_aws_api_service_reachability(
+    service: str,
+    endpoints: list[dict[str, Any]],
+    network_result: dict[str, Any],
+) -> dict[str, Any]:
+    matching = [endpoint for endpoint in endpoints if endpoint.get("service") == service]
+    available = [endpoint for endpoint in matching if endpoint.get("verdict") == "reachable"]
+    if available:
+        endpoint = available[0]
+        return {
+            "service": service,
+            "status": "private_endpoint_ready",
+            "endpoint_id": endpoint.get("via"),
+            "endpoint_type": endpoint.get("endpoint_type"),
+            "private_dns_enabled": endpoint.get("private_dns_enabled"),
+            "policy_configured": endpoint.get("policy_configured"),
+            "security_group_count": endpoint.get("security_group_count"),
+        }
+    internet = str(network_result.get("summary", {}).get("internet_access") or "unknown")
+    if internet == "yes":
+        return {"service": service, "status": "public_route_required", "endpoint_id": None}
+    return {
+        "service": service,
+        "status": "blocked",
+        "endpoint_id": None,
+        "reason": "no_available_vpc_endpoint_and_no_internet_egress",
+    }
+
+
 def _environment_dependency_reason(
     key: str,
     service: str,
@@ -1386,6 +1453,9 @@ def _aws_service_endpoint_summaries(endpoints: list[dict[str, Any]]) -> list[dic
                 "service_name": service_name or None,
                 "endpoint_type": endpoint.get("VpcEndpointType"),
                 "via": endpoint.get("VpcEndpointId"),
+                "private_dns_enabled": endpoint.get("PrivateDnsEnabled"),
+                "policy_configured": bool(endpoint.get("PolicyDocument")),
+                "security_group_count": len(endpoint.get("Groups") or []),
                 "verdict": "reachable" if endpoint.get("State") == "available" else "unknown",
             }
         )
