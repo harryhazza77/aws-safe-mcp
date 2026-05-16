@@ -264,6 +264,59 @@ def investigate_eventbridge_rule_delivery(
     }
 
 
+def audit_eventbridge_target_retry_dlq_safety(
+    runtime: AwsRuntime,
+    rule_name: str,
+    event_bus_name: str | None = None,
+    region: str | None = None,
+    since_minutes: int | None = 60,
+) -> dict[str, Any]:
+    """Audit EventBridge target retry and DLQ loss-safety without publishing events."""
+
+    resolved_region = resolve_region(runtime, region)
+    window_minutes = clamp_since_minutes(
+        since_minutes,
+        default=60,
+        configured_max=runtime.config.max_since_minutes,
+    )
+    dependencies = explain_eventbridge_rule_dependencies(
+        runtime,
+        rule_name=rule_name,
+        event_bus_name=event_bus_name,
+        region=resolved_region,
+    )
+    metrics = _eventbridge_metric_summary(
+        runtime,
+        rule_name=str(dependencies["rule_name"]),
+        event_bus_name=str(dependencies["event_bus_name"]),
+        region=resolved_region,
+        since_minutes=window_minutes,
+    )
+    target_safety = [
+        _target_retry_dlq_safety(target, metrics)
+        for target in _delivery_target_diagnostics(dependencies)
+    ]
+    signals = _retry_dlq_safety_signals(target_safety, metrics)
+    return {
+        "rule_name": dependencies["rule_name"],
+        "event_bus_name": dependencies["event_bus_name"],
+        "region": resolved_region,
+        "window_minutes": window_minutes,
+        "summary": _retry_dlq_safety_summary(signals),
+        "target_safety": target_safety,
+        "metrics": {
+            "available": metrics["available"],
+            "window_minutes": metrics["window_minutes"],
+            "failed_invocations": metrics["metrics"]["FailedInvocations"],
+            "sent_to_dlq": metrics["metrics"]["InvocationsSentToDLQ"],
+            "failed_to_send_to_dlq": metrics["metrics"]["InvocationsFailedToBeSentToDLQ"],
+        },
+        "signals": signals,
+        "suggested_next_checks": _retry_dlq_safety_next_checks(signals),
+        "warnings": [*dependencies.get("warnings", []), *metrics.get("warnings", [])],
+    }
+
+
 def explain_event_driven_flow(
     runtime: AwsRuntime,
     name_fragment: str | None = None,
@@ -1118,6 +1171,7 @@ def _dlq_summary(
             AttributeNames=[
                 "ApproximateNumberOfMessages",
                 "ApproximateNumberOfMessagesNotVisible",
+                "KmsMasterKeyId",
                 "Policy",
             ],
         )
@@ -1140,6 +1194,7 @@ def _dlq_summary(
         service="events.amazonaws.com",
         action="sqs:SendMessage",
     )
+    summary["kms_master_key_id"] = attributes.get("KmsMasterKeyId")
     return summary
 
 
@@ -1770,6 +1825,127 @@ def _delivery_suggested_next_checks(signals: dict[str, Any]) -> list[str]:
         checks.append(
             "If events are expected but absent, verify the upstream event source and event pattern."
         )
+    return checks
+
+
+def _target_retry_dlq_safety(
+    target: dict[str, Any],
+    metrics: dict[str, Any],
+) -> dict[str, Any]:
+    retry_policy = target.get("retry_policy") or {}
+    dlq = target.get("dead_letter_queue")
+    risks: list[str] = []
+    cautions: list[str] = []
+
+    if not dlq:
+        risks.append("target_without_dlq")
+    elif dlq.get("policy_allows_eventbridge") is False:
+        risks.append("dlq_policy_not_allowing_eventbridge")
+    elif dlq.get("policy_allows_eventbridge") is None:
+        cautions.append("dlq_policy_unknown")
+
+    max_attempts = _int_or_none(retry_policy.get("MaximumRetryAttempts"))
+    max_age = _int_or_none(retry_policy.get("MaximumEventAgeInSeconds"))
+    if not retry_policy:
+        cautions.append("retry_policy_defaulted")
+    if max_attempts is not None and max_attempts < 1:
+        risks.append("retry_attempts_too_low")
+    if max_age is not None and max_age < 300:
+        risks.append("max_event_age_too_low")
+    if target.get("permission_allowed") is False:
+        risks.append("target_permission_denied")
+    elif target.get("permission_allowed") is None:
+        cautions.append("target_permission_unknown")
+    if _metric_sum(metrics.get("metrics", {}), "InvocationsFailedToBeSentToDLQ") > 0:
+        risks.append("failed_to_send_to_dlq_metric")
+    if not dlq and _metric_sum(metrics.get("metrics", {}), "FailedInvocations") > 0:
+        risks.append("failed_invocations_without_dlq")
+
+    return {
+        "target_id": target.get("target_id"),
+        "target_type": target.get("target_type"),
+        "arn": target.get("arn"),
+        "retry_policy": {
+            "maximum_retry_attempts": max_attempts,
+            "maximum_event_age_seconds": max_age,
+            "defaulted": not retry_policy,
+        },
+        "dead_letter_queue": None
+        if not dlq
+        else {
+            "arn": dlq.get("arn"),
+            "available": dlq.get("available"),
+            "policy_allows_eventbridge": dlq.get("policy_allows_eventbridge"),
+            "kms_master_key_id": dlq.get("kms_master_key_id"),
+            "approximate_number_of_messages": dlq.get("approximate_number_of_messages"),
+        },
+        "silently_dropped_risk": "target_without_dlq" in risks
+        and (
+            "failed_invocations_without_dlq" in risks
+            or "retry_attempts_too_low" in risks
+            or "max_event_age_too_low" in risks
+        ),
+        "risks": sorted(set(risks)),
+        "cautions": sorted(set(cautions)),
+    }
+
+
+def _retry_dlq_safety_signals(
+    target_safety: list[dict[str, Any]],
+    metrics: dict[str, Any],
+) -> dict[str, Any]:
+    risks = [risk for target in target_safety for risk in target["risks"]]
+    cautions = [caution for target in target_safety for caution in target["cautions"]]
+    return {
+        "target_count": len(target_safety),
+        "targets_without_dlq": [
+            target["target_id"] for target in target_safety if not target["dead_letter_queue"]
+        ],
+        "targets_with_silent_drop_risk": [
+            target["target_id"] for target in target_safety if target["silently_dropped_risk"]
+        ],
+        "failed_invocations": _metric_sum(metrics.get("metrics", {}), "FailedInvocations"),
+        "failed_to_send_to_dlq": _metric_sum(
+            metrics.get("metrics", {}),
+            "InvocationsFailedToBeSentToDLQ",
+        ),
+        "risk_count": len(risks),
+        "caution_count": len(cautions),
+        "risks": sorted(set(risks)),
+        "cautions": sorted(set(cautions)),
+    }
+
+
+def _retry_dlq_safety_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    if signals["targets_with_silent_drop_risk"]:
+        status = "silent_drop_risk"
+    elif signals["risk_count"]:
+        status = "needs_attention"
+    elif signals["caution_count"]:
+        status = "caution"
+    else:
+        status = "ready"
+    return {
+        "status": status,
+        "target_count": signals["target_count"],
+        "risk_count": signals["risk_count"],
+        "caution_count": signals["caution_count"],
+        "targets_with_silent_drop_risk": signals["targets_with_silent_drop_risk"],
+    }
+
+
+def _retry_dlq_safety_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if signals["targets_without_dlq"]:
+        checks.append("Add target DLQs for targets where dropped events must be retained.")
+    if "dlq_policy_not_allowing_eventbridge" in signals["risks"]:
+        checks.append("Fix DLQ queue policy so events.amazonaws.com can send failed events.")
+    if "failed_to_send_to_dlq_metric" in signals["risks"]:
+        checks.append("Inspect DLQ permissions, encryption, and region/account alignment.")
+    if "retry_attempts_too_low" in signals["risks"] or "max_event_age_too_low" in signals["risks"]:
+        checks.append("Review retry attempts and maximum event age for transient target failures.")
+    if not checks:
+        checks.append("No EventBridge retry/DLQ safety blocker found in metadata.")
     return checks
 
 

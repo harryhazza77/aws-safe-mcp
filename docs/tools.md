@@ -771,6 +771,21 @@ Inputs:
 - `region` optional
 - `since_minutes` optional, default `60`
 
+### `audit_eventbridge_target_retry_dlq_safety`
+
+Audits one EventBridge rule's target retry policy and DLQ safety. It summarizes
+maximum retry attempts, maximum event age, DLQ queue-policy and KMS hints,
+failed-invocation and failed-to-DLQ metrics, and likely silent-drop edges. It
+does not publish events, read DLQ messages, return raw policies, or return event
+payloads.
+
+Inputs:
+
+- `rule_name` required
+- `event_bus_name` optional, default `default`
+- `region` optional
+- `since_minutes` optional, default `60`
+
 ### `explain_event_driven_flow`
 
 Stitches EventBridge, Step Functions, and Lambda dependency tools into one

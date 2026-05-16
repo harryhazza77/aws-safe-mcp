@@ -37,6 +37,9 @@ from aws_safe_mcp.tools.ecs import get_ecs_service_summary as get_ecs_service_su
 from aws_safe_mcp.tools.ecs import list_ecs_clusters as list_ecs_clusters_tool
 from aws_safe_mcp.tools.ecs import list_ecs_services as list_ecs_services_tool
 from aws_safe_mcp.tools.eventbridge import (
+    audit_eventbridge_target_retry_dlq_safety as audit_eventbridge_target_retry_dlq_safety_tool,
+)
+from aws_safe_mcp.tools.eventbridge import (
     explain_event_driven_flow as explain_event_driven_flow_tool,
 )
 from aws_safe_mcp.tools.eventbridge import (
@@ -1069,6 +1072,23 @@ def _register_eventbridge_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRu
     ) -> dict[str, object]:
         """Diagnose EventBridge delivery from config, metrics, DLQs, and permissions."""
         return investigate_eventbridge_rule_delivery_tool(
+            runtime,
+            rule_name=rule_name,
+            event_bus_name=event_bus_name,
+            region=region,
+            since_minutes=since_minutes,
+        )
+
+    @mcp.tool()
+    @audit.tool("audit_eventbridge_target_retry_dlq_safety")
+    def audit_eventbridge_target_retry_dlq_safety(
+        rule_name: str,
+        event_bus_name: str | None = None,
+        region: str | None = None,
+        since_minutes: int | None = 60,
+    ) -> dict[str, object]:
+        """Audit EventBridge target retry, DLQ, and silent-drop safety."""
+        return audit_eventbridge_target_retry_dlq_safety_tool(
             runtime,
             rule_name=rule_name,
             event_bus_name=event_bus_name,

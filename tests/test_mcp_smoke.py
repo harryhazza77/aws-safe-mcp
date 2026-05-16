@@ -113,6 +113,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "get_eventbridge_time_sources",
         "explain_eventbridge_rule_dependencies",
         "investigate_eventbridge_rule_delivery",
+        "audit_eventbridge_target_retry_dlq_safety",
         "explain_event_driven_flow",
         "diagnose_region_partition_mismatches",
         "search_aws_resources",

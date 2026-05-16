@@ -188,6 +188,9 @@ Related tools:
 - Report EventBridge target delivery readiness with explicit blockers,
   cautions, target DLQ coverage, permission status, failed invocation metrics,
   and DLQ activity.
+- Audit EventBridge retry and DLQ loss-safety per target, including retry
+  attempts, max event age, DLQ queue-policy/KMS hints, failed-to-DLQ metrics,
+  and likely silent-drop edges without raw policies or payloads.
 - Separate delivery findings into configuration, permission, and metric signal
   groups with target-level retry/DLQ context.
 - Start from a workload name, event source, detail type, or event-pattern path
@@ -200,6 +203,7 @@ Related tools:
 - `get_eventbridge_time_sources`
 - `explain_eventbridge_rule_dependencies`
 - `investigate_eventbridge_rule_delivery`
+- `audit_eventbridge_target_retry_dlq_safety`
 - `explain_event_driven_flow`
 
 ## Safe Storage And Data-Service Metadata

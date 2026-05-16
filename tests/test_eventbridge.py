@@ -10,6 +10,7 @@ import aws_safe_mcp.tools.eventbridge as eventbridge_module
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import ToolInputError
 from aws_safe_mcp.tools.eventbridge import (
+    audit_eventbridge_target_retry_dlq_safety,
     explain_event_driven_flow,
     explain_eventbridge_rule_dependencies,
     get_eventbridge_time_sources,
@@ -282,6 +283,7 @@ class FakeSqsClient:
                 "QueueArn": f"arn:aws:sqs:eu-west-2:123456789012:{queue_name}",
                 "ApproximateNumberOfMessages": self.messages,
                 "ApproximateNumberOfMessagesNotVisible": "1",
+                "KmsMasterKeyId": "alias/dev-rule-dlq",
                 "Policy": json.dumps(
                     {
                         "Statement": {
@@ -617,6 +619,33 @@ def test_investigate_eventbridge_rule_delivery_keeps_metrics_failures_non_fatal(
 
     assert result["metrics"]["available"] is False
     assert result["warnings"]
+
+
+def test_audit_eventbridge_target_retry_dlq_safety_flags_silent_drop_edges() -> None:
+    result = audit_eventbridge_target_retry_dlq_safety(
+        FakeRuntime(),
+        "dev-orders",
+        since_minutes=30,
+    )
+
+    assert result["summary"] == {
+        "status": "silent_drop_risk",
+        "target_count": 3,
+        "risk_count": 4,
+        "caution_count": 3,
+        "targets_with_silent_drop_risk": ["sfn", "unsupported"],
+    }
+    lambda_target = next(item for item in result["target_safety"] if item["target_id"] == "lambda")
+    assert lambda_target["dead_letter_queue"]["policy_allows_eventbridge"] is True
+    assert lambda_target["dead_letter_queue"]["kms_master_key_id"] == "alias/dev-rule-dlq"
+    assert lambda_target["retry_policy"] == {
+        "maximum_retry_attempts": 2,
+        "maximum_event_age_seconds": 3600,
+        "defaulted": False,
+    }
+    assert "target_without_dlq" in result["signals"]["risks"]
+    assert result["metrics"]["failed_invocations"]["sum"] == 1.0
+    assert any("DLQs" in check for check in result["suggested_next_checks"])
 
 
 def test_investigate_eventbridge_rule_delivery_handles_disabled_rule_without_targets() -> None:
