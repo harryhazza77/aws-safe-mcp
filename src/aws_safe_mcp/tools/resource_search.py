@@ -112,7 +112,7 @@ def search_aws_resources_by_tag(
         request["TagFilters"][0]["Values"] = [tag_value]
 
     resources: list[dict[str, Any]] = []
-    pagination_token = ""
+    pagination_token = ""  # nosec B105 - AWS pagination cursor, not a credential
     warnings: list[str] = []
     try:
         while len(resources) < limit:
@@ -532,7 +532,7 @@ def generate_application_health_narrative(
         "follow_up_tools": _application_health_follow_up_tools(ranked_risks),
         "raw_policy_documents_returned": False,
         "payloads_returned": False,
-        "secret_values_returned": False,
+        "secret_values_returned": False,  # nosec B105 - audit field name, not a secret
         "warnings": warnings,
     }
 
