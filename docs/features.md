@@ -68,6 +68,8 @@ Related tools:
 
 - List visible REST, HTTP, and WebSocket APIs.
 - Summarize one API without invoking it.
+- Summarize API Gateway authorizers, identity sources, attached routes, and
+  Lambda authorizer targets without returning secrets.
 - Map API Gateway routes and methods to integrations.
 - Detect Lambda targets and summarize whether Lambda resource policies appear
   to allow API Gateway invoke.
@@ -79,6 +81,7 @@ Related tools:
 
 - `list_api_gateways`
 - `get_api_gateway_summary`
+- `get_api_gateway_authorizer_summary`
 - `explain_api_gateway_dependencies`
 - `investigate_api_gateway_route`
 

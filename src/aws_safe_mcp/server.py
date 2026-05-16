@@ -7,6 +7,9 @@ from aws_safe_mcp.auth import AwsRuntime
 from aws_safe_mcp.tools.apigateway import (
     explain_api_gateway_dependencies as explain_api_gateway_dependencies_tool,
 )
+from aws_safe_mcp.tools.apigateway import (
+    get_api_gateway_authorizer_summary as get_api_gateway_authorizer_summary_tool,
+)
 from aws_safe_mcp.tools.apigateway import get_api_gateway_summary as get_api_gateway_summary_tool
 from aws_safe_mcp.tools.apigateway import (
     investigate_api_gateway_route as investigate_api_gateway_route_tool,
@@ -511,6 +514,21 @@ def _register_api_gateway_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRu
     ) -> dict[str, object]:
         """Summarize one API Gateway API without invoking it."""
         return get_api_gateway_summary_tool(
+            runtime,
+            api_id=api_id,
+            api_type=api_type,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("get_api_gateway_authorizer_summary")
+    def get_api_gateway_authorizer_summary(
+        api_id: str,
+        api_type: str | None = None,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Summarize API Gateway authorizers and attached routes."""
+        return get_api_gateway_authorizer_summary_tool(
             runtime,
             api_id=api_id,
             api_type=api_type,

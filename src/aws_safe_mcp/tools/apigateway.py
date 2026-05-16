@@ -74,6 +74,34 @@ def get_api_gateway_summary(
     )
 
 
+def get_api_gateway_authorizer_summary(
+    runtime: AwsRuntime,
+    api_id: str,
+    api_type: str | None = None,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    if not api_id.strip():
+        raise ToolInputError("api_id is required")
+    normalized_type = (api_type or "auto").lower()
+    warnings: list[str] = []
+    if normalized_type in {"auto", "rest"}:
+        result = _rest_authorizer_summary(runtime, resolved_region, api_id, warnings)
+        if result is not None:
+            return result
+        if normalized_type == "rest":
+            error = {"Error": {"Code": "NotFound", "Message": "REST API not found"}}
+            raise normalize_aws_error(ClientError(error, "GetRestApi"), "apigateway.GetRestApi")
+    if normalized_type in {"auto", "http", "websocket"}:
+        result = _v2_authorizer_summary(runtime, resolved_region, api_id, warnings)
+        if result is not None:
+            return result
+    raise normalize_aws_error(
+        ClientError({"Error": {"Code": "NotFound", "Message": "API Gateway not found"}}, "GetApi"),
+        "apigatewayv2.GetApi",
+    )
+
+
 def explain_api_gateway_dependencies(
     runtime: AwsRuntime,
     api_id: str,
@@ -382,6 +410,106 @@ def _rest_api_dependencies(
     )
 
 
+def _rest_authorizer_summary(
+    runtime: AwsRuntime,
+    region: str,
+    api_id: str,
+    warnings: list[str],
+) -> dict[str, Any] | None:
+    client = runtime.client("apigateway", region=region)
+    try:
+        api = client.get_rest_api(restApiId=api_id)
+        resources, truncated = _collect_rest_resources(
+            client,
+            api_id,
+            limit=runtime.config.max_results,
+        )
+        authorizers = client.get_authorizers(restApiId=api_id).get("items", [])
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in {"NotFoundException", "NotFound"}:
+            return None
+        raise normalize_aws_error(exc, "apigateway.GetAuthorizers") from exc
+    except BotoCoreError as exc:
+        raise normalize_aws_error(exc, "apigateway.GetAuthorizers") from exc
+    if truncated:
+        warnings.append("REST API resources were truncated at the configured max_results limit")
+    authorizer_nodes = [_rest_authorizer_node(item) for item in authorizers]
+    authorizers_by_id = {str(item["authorizer_id"]): item for item in authorizer_nodes}
+    routes = []
+    for resource in resources.get("items", []):
+        path = str(resource.get("path") or "/")
+        for method, config in resource.get("resourceMethods", {}).items():
+            authorizer_id = config.get("authorizerId") if isinstance(config, dict) else None
+            routes.append(
+                {
+                    "route_key": f"{method} {path}",
+                    "method": str(method),
+                    "path": path,
+                    "authorization_type": (
+                        config.get("authorizationType") if isinstance(config, dict) else None
+                    ),
+                    "authorizer_id": authorizer_id,
+                    "authorizer_name": authorizers_by_id.get(str(authorizer_id), {}).get("name"),
+                }
+            )
+    return _authorizer_result(
+        api_id,
+        region,
+        api.get("name"),
+        "REST",
+        authorizer_nodes,
+        routes,
+        warnings,
+    )
+
+
+def _v2_authorizer_summary(
+    runtime: AwsRuntime,
+    region: str,
+    api_id: str,
+    warnings: list[str],
+) -> dict[str, Any] | None:
+    client = runtime.client("apigatewayv2", region=region)
+    try:
+        api = client.get_api(ApiId=api_id)
+        routes_response, truncated = _collect_v2_routes(
+            client,
+            api_id,
+            limit=runtime.config.max_results,
+        )
+        authorizers = client.get_authorizers(ApiId=api_id).get("Items", [])
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in {"NotFoundException", "NotFound"}:
+            return None
+        raise normalize_aws_error(exc, "apigatewayv2.GetAuthorizers") from exc
+    except BotoCoreError as exc:
+        raise normalize_aws_error(exc, "apigatewayv2.GetAuthorizers") from exc
+    if truncated:
+        warnings.append("API Gateway v2 routes were truncated at the configured max_results limit")
+    authorizer_nodes = [_v2_authorizer_node(item) for item in authorizers]
+    authorizers_by_id = {str(item["authorizer_id"]): item for item in authorizer_nodes}
+    routes = [
+        {
+            "route_key": route.get("RouteKey"),
+            "authorization_type": route.get("AuthorizationType"),
+            "authorizer_id": route.get("AuthorizerId"),
+            "authorizer_name": authorizers_by_id.get(str(route.get("AuthorizerId")), {}).get(
+                "name"
+            ),
+        }
+        for route in routes_response.get("Items", [])
+    ]
+    return _authorizer_result(
+        api_id,
+        region,
+        api.get("Name"),
+        api.get("ProtocolType"),
+        authorizer_nodes,
+        routes,
+        warnings,
+    )
+
+
 def _v2_api_summary(runtime: AwsRuntime, region: str, api_id: str) -> dict[str, Any] | None:
     client = runtime.client("apigatewayv2", region=region)
     try:
@@ -404,6 +532,59 @@ def _v2_api_summary(runtime: AwsRuntime, region: str, api_id: str) -> dict[str, 
         "endpoint": api.get("ApiEndpoint"),
         "route_count": len(routes.get("Items", [])),
         "is_truncated": truncated,
+    }
+
+
+def _rest_authorizer_node(item: dict[str, Any]) -> dict[str, Any]:
+    uri = item.get("authorizerUri")
+    return {
+        "authorizer_id": item.get("id"),
+        "name": item.get("name"),
+        "type": item.get("type"),
+        "identity_sources": [item.get("identitySource")] if item.get("identitySource") else [],
+        "lambda_function_arn": _lambda_arn_from_integration_uri(uri),
+        "ttl_seconds": item.get("authorizerResultTtlInSeconds"),
+    }
+
+
+def _v2_authorizer_node(item: dict[str, Any]) -> dict[str, Any]:
+    uri = item.get("AuthorizerUri")
+    return {
+        "authorizer_id": item.get("AuthorizerId"),
+        "name": item.get("Name"),
+        "type": item.get("AuthorizerType"),
+        "identity_sources": item.get("IdentitySource", []),
+        "lambda_function_arn": _lambda_arn_from_integration_uri(uri),
+        "ttl_seconds": item.get("AuthorizerResultTtlInSeconds"),
+    }
+
+
+def _authorizer_result(
+    api_id: str,
+    region: str,
+    api_name: Any,
+    api_type: Any,
+    authorizers: list[dict[str, Any]],
+    routes: list[dict[str, Any]],
+    warnings: list[str],
+) -> dict[str, Any]:
+    attached_routes = [route for route in routes if route.get("authorizer_id")]
+    return {
+        "api_id": api_id,
+        "region": region,
+        "name": api_name,
+        "api_type": api_type,
+        "summary": {
+            "authorizer_count": len(authorizers),
+            "attached_route_count": len(attached_routes),
+            "unauthenticated_route_count": len(routes) - len(attached_routes),
+            "lambda_authorizer_count": sum(
+                1 for item in authorizers if item.get("lambda_function_arn")
+            ),
+        },
+        "authorizers": authorizers,
+        "routes": routes,
+        "warnings": warnings,
     }
 
 

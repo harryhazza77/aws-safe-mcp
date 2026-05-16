@@ -363,6 +363,18 @@ Inputs:
 - `api_type` optional, one of `auto`, `rest`, `http`, or `websocket`
 - `region` optional
 
+### `get_api_gateway_authorizer_summary`
+
+Summarizes REST and HTTP/WebSocket API authorizers without returning secrets.
+Includes authorizer type, identity sources, Lambda authorizer target metadata,
+and route-to-authorizer relationships.
+
+Inputs:
+
+- `api_id` required
+- `api_type` optional, one of `auto`, `rest`, `http`, or `websocket`
+- `region` optional
+
 ### `explain_api_gateway_dependencies`
 
 Maps one API Gateway API into route and integration dependencies without
