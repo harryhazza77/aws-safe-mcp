@@ -651,3 +651,16 @@ Inputs:
 - `tag_value` optional
 - `region` optional
 - `max_results` optional
+
+### `get_cross_service_incident_brief`
+
+Builds a compact incident brief from existing safe tools using a resource name
+fragment. The result includes matching resources, matching CloudWatch alarms,
+bounded Lambda recent-error/dependency context when applicable, and suggested
+next checks.
+
+Inputs:
+
+- `query` required
+- `region` optional
+- `max_matches` optional

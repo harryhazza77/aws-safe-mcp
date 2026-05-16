@@ -8,7 +8,12 @@ from botocore.exceptions import ClientError
 
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import ToolInputError
-from aws_safe_mcp.tools.resource_search import search_aws_resources, search_aws_resources_by_tag
+from aws_safe_mcp.tools import resource_search
+from aws_safe_mcp.tools.resource_search import (
+    get_cross_service_incident_brief,
+    search_aws_resources,
+    search_aws_resources_by_tag,
+)
 
 
 class FakePaginator:
@@ -193,6 +198,53 @@ def test_search_aws_resources_by_tag_reports_tagging_api_warning() -> None:
 
     assert result["count"] == 0
     assert result["warnings"]
+
+
+def test_get_cross_service_incident_brief_composes_existing_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_search(*_: Any, **__: Any) -> dict[str, Any]:
+        return {
+            "count": 1,
+            "results": [{"service": "lambda", "name": "dev-api", "summary": {}}],
+            "warnings": [],
+        }
+
+    def fake_alarms(*_: Any, **__: Any) -> dict[str, Any]:
+        return {
+            "alarms": [
+                {
+                    "alarm_name": "dev-api-errors",
+                    "namespace": "AWS/Lambda",
+                    "metric_name": "Errors",
+                    "inferred_resources": [{"name": "dev-api"}],
+                }
+            ]
+        }
+
+    def fake_errors(*_: Any, **__: Any) -> dict[str, Any]:
+        return {"count": 1, "groups": [{"fingerprint": "ERROR", "count": 1}]}
+
+    def fake_dependencies(*_: Any, **__: Any) -> dict[str, Any]:
+        return {"graph_summary": {"edge_count": 1}, "edges": [{"relationship": "writes_logs_to"}]}
+
+    monkeypatch.setattr(resource_search, "search_aws_resources", fake_search)
+    monkeypatch.setattr(resource_search, "list_cloudwatch_alarms", fake_alarms)
+    monkeypatch.setattr(resource_search, "get_lambda_recent_errors", fake_errors)
+    monkeypatch.setattr(resource_search, "explain_lambda_dependencies", fake_dependencies)
+
+    result = get_cross_service_incident_brief(FakeRuntime(), "dev-api")
+
+    assert result["matching_resources"]["count"] == 1
+    assert result["alarm_matches"][0]["alarm_name"] == "dev-api-errors"
+    assert result["lambda_context"][0]["recent_error_count"] == 1
+    assert result["lambda_context"][0]["dependency_summary"] == {"edge_count": 1}
+    assert any("CloudWatch alarms" in check for check in result["suggested_next_checks"])
+
+
+def test_get_cross_service_incident_brief_rejects_empty_query() -> None:
+    with pytest.raises(ToolInputError, match="query is required"):
+        get_cross_service_incident_brief(FakeRuntime(), " ")
 
 
 class StatefulTagRuntime(FakeRuntime):

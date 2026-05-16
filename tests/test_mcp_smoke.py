@@ -104,6 +104,7 @@ async def test_mcp_smoke_lists_tools_and_calls_identity() -> None:
         "explain_event_driven_flow",
         "search_aws_resources",
         "search_aws_resources_by_tag",
+        "get_cross_service_incident_brief",
     }
     assert status_result["authenticated"] is True
     assert status_result["principal_type"] == "assumed_role"

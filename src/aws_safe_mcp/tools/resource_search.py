@@ -7,11 +7,15 @@ from botocore.exceptions import BotoCoreError, ClientError
 from aws_safe_mcp.auth import AwsRuntime
 from aws_safe_mcp.errors import ToolInputError, normalize_aws_error
 from aws_safe_mcp.tools.apigateway import list_api_gateways
-from aws_safe_mcp.tools.cloudwatch import list_cloudwatch_log_groups
+from aws_safe_mcp.tools.cloudwatch import list_cloudwatch_alarms, list_cloudwatch_log_groups
 from aws_safe_mcp.tools.common import clamp_limit, resolve_region
 from aws_safe_mcp.tools.dynamodb import list_dynamodb_tables
 from aws_safe_mcp.tools.eventbridge import list_eventbridge_rules
-from aws_safe_mcp.tools.lambda_tools import list_lambda_functions
+from aws_safe_mcp.tools.lambda_tools import (
+    explain_lambda_dependencies,
+    get_lambda_recent_errors,
+    list_lambda_functions,
+)
 from aws_safe_mcp.tools.s3 import list_s3_buckets
 from aws_safe_mcp.tools.stepfunctions import list_step_functions
 
@@ -111,11 +115,135 @@ def search_aws_resources_by_tag(
     }
 
 
+def get_cross_service_incident_brief(
+    runtime: AwsRuntime,
+    query: str,
+    region: str | None = None,
+    max_matches: int | None = None,
+) -> dict[str, Any]:
+    normalized_query = query.strip()
+    if not normalized_query:
+        raise ToolInputError("query is required")
+    limit = clamp_limit(
+        max_matches,
+        default=10,
+        configured_max=runtime.config.max_results,
+        label="max_matches",
+    )
+    warnings: list[str] = []
+    resources = search_aws_resources(
+        runtime,
+        query=normalized_query,
+        region=region,
+        max_results=limit,
+    )
+    alarms = _incident_alarm_matches(runtime, normalized_query, region, limit, warnings)
+    lambda_context = [
+        _incident_lambda_context(runtime, str(item.get("name")), region, warnings)
+        for item in resources.get("results", [])
+        if item.get("service") == "lambda"
+    ][:3]
+    return {
+        "query": normalized_query,
+        "region": region or runtime.region,
+        "matching_resources": resources,
+        "alarm_matches": alarms,
+        "lambda_context": lambda_context,
+        "suggested_next_checks": _incident_next_checks(resources, alarms, lambda_context),
+        "warnings": [*resources.get("warnings", []), *warnings],
+    }
+
+
 def _require_tag_key(tag_key: str) -> str:
     normalized = tag_key.strip()
     if not normalized:
         raise ToolInputError("tag_key is required")
     return normalized
+
+
+def _incident_alarm_matches(
+    runtime: AwsRuntime,
+    query: str,
+    region: str | None,
+    limit: int,
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    try:
+        response = list_cloudwatch_alarms(runtime, region=region, max_results=limit)
+    except Exception as exc:  # noqa: BLE001 - incident brief is best-effort
+        warnings.append(f"cloudwatch_alarms: {exc}")
+        return []
+    normalized = query.lower()
+    matches = []
+    for alarm in response.get("alarms", []):
+        resource_names = " ".join(
+            str(resource.get("name") or "") for resource in alarm.get("inferred_resources", [])
+        )
+        haystack = " ".join(
+            [
+                str(alarm.get("alarm_name") or ""),
+                str(alarm.get("namespace") or ""),
+                str(alarm.get("metric_name") or ""),
+                resource_names,
+            ]
+        ).lower()
+        if normalized in haystack:
+            matches.append(alarm)
+    return matches[:limit]
+
+
+def _incident_lambda_context(
+    runtime: AwsRuntime,
+    function_name: str,
+    region: str | None,
+    warnings: list[str],
+) -> dict[str, Any]:
+    context: dict[str, Any] = {"function_name": function_name}
+    try:
+        errors = get_lambda_recent_errors(
+            runtime,
+            function_name,
+            region=region,
+            max_events=5,
+            since_minutes=60,
+        )
+        context["recent_error_count"] = errors.get("count")
+        context["recent_error_groups"] = errors.get("groups", [])[:3]
+    except Exception as exc:  # noqa: BLE001 - incident brief is best-effort
+        warnings.append(f"lambda_recent_errors:{function_name}: {exc}")
+    try:
+        dependencies = explain_lambda_dependencies(
+            runtime,
+            function_name,
+            region=region,
+            include_permission_checks=False,
+        )
+        context["dependency_summary"] = dependencies.get("graph_summary")
+        context["dependency_edges"] = dependencies.get("edges", [])[:10]
+    except Exception as exc:  # noqa: BLE001 - incident brief is best-effort
+        warnings.append(f"lambda_dependencies:{function_name}: {exc}")
+    return context
+
+
+def _incident_next_checks(
+    resources: dict[str, Any],
+    alarms: list[dict[str, Any]],
+    lambda_context: list[dict[str, Any]],
+) -> list[str]:
+    checks = []
+    if alarms:
+        checks.append("Review matching CloudWatch alarms first; they encode expected symptoms.")
+    if any(context.get("recent_error_count") for context in lambda_context):
+        checks.append(
+            "Inspect grouped Lambda errors and dependency edges for the failing function."
+        )
+    if resources.get("count", 0) == 0:
+        checks.append("Broaden the resource name fragment or search by tag.")
+    if not checks:
+        checks.append(
+            "Open the matching resource summaries and follow dependency tools for the service."
+        )
+    return checks
 
 
 def _selected_services(services: list[str] | None) -> list[str]:

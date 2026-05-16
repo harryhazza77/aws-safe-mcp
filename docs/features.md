@@ -216,11 +216,15 @@ Related tools:
   rules without using raw AWS API passthrough.
 - Search tagged resources with the Resource Groups Tagging API and group matches
   by service and resource type.
+- Build a compact incident brief from existing safe tools, including matching
+  resources, matching alarms, bounded Lambda error/dependency context, and
+  suggested next checks.
 
 Related tools:
 
 - `search_aws_resources`
 - `search_aws_resources_by_tag`
+- `get_cross_service_incident_brief`
 
 ## Local Emulator Workflows
 

@@ -81,6 +81,9 @@ from aws_safe_mcp.tools.lambda_tools import (
     list_lambda_functions as list_lambda_functions_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
+    get_cross_service_incident_brief as get_cross_service_incident_brief_tool,
+)
+from aws_safe_mcp.tools.resource_search import (
     search_aws_resources as search_aws_resources_tool,
 )
 from aws_safe_mcp.tools.resource_search import (
@@ -895,4 +898,19 @@ def _register_search_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
             tag_value=tag_value,
             region=region,
             max_results=max_results,
+        )
+
+    @mcp.tool()
+    @audit.tool("get_cross_service_incident_brief")
+    def get_cross_service_incident_brief(
+        query: str,
+        region: str | None = None,
+        max_matches: int | None = None,
+    ) -> dict[str, object]:
+        """Compose a bounded incident brief from existing safe discovery tools."""
+        return get_cross_service_incident_brief_tool(
+            runtime,
+            query=query,
+            region=region,
+            max_matches=max_matches,
         )

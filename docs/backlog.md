@@ -23,22 +23,7 @@ Avoid features that:
 
 ## Feature Candidates
 
-### 1. Cross-Service Incident Brief
-
-Add an incident-brief tool that accepts a resource name fragment and produces a
-compact investigation bundle from existing safe tools: matching resources,
-dependency graphs, recent errors, alarms if available, and suggested next
-checks.
-
-- Value: this is the "start here" workflow when the user only knows a workload
-  name.
-- Existing coverage: `search_aws_resources` and `explain_event_driven_flow`
-  already provide pieces of this. This feature should compose them into a
-  concise, bounded incident entry point.
-- Fixture: baseline event-driven workload with Lambda, API Gateway,
-  EventBridge, SQS, and DynamoDB.
-- Emulator: Floci and MiniStack.
-- Acceptance: tool composes existing safe summaries without adding raw reads.
+No open feature candidates remain from the current goal batch.
 
 ## Existing Feature Cross-Check
 
@@ -68,9 +53,4 @@ existing tools into higher-value diagnostics.
 
 ## Suggested Order
 
-1. SQS queue dependency explanation.
-2. Step Functions execution diagnostics upgrade.
-3. API Gateway route diagnostics.
-4. SNS topic inventory and summary.
-5. SNS topic dependency explanation.
-6. Cross-service incident brief.
+No suggested order remains for the current goal batch.
