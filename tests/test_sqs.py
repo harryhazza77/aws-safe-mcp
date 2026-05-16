@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 from aws_safe_mcp.config import AwsSafeConfig
 from aws_safe_mcp.errors import AwsToolError, ToolInputError
 from aws_safe_mcp.tools.sqs import (
+    check_sqs_to_lambda_delivery,
     explain_sqs_queue_dependencies,
     get_sqs_queue_summary,
     list_sqs_queues,
@@ -105,9 +106,14 @@ class FakeLambdaClient:
                     "FunctionArn": "arn:aws:lambda:eu-west-2:123456789012:function:dev-handler",
                     "EventSourceArn": "arn:aws:sqs:eu-west-2:123456789012:dev-work",
                     "BatchSize": 10,
+                    "MaximumBatchingWindowInSeconds": 5,
+                    "FunctionResponseTypes": ["ReportBatchItemFailures"],
                 }
             ]
         }
+
+    def get_function_configuration(self, **_: Any) -> dict[str, Any]:
+        return {"Timeout": 5}
 
 
 def test_list_sqs_queues_returns_bounded_metadata() -> None:
@@ -211,6 +217,35 @@ def test_explain_sqs_queue_dependencies_can_disable_permission_checks() -> None:
     assert result["permission_checks"]["checked_count"] == 0
 
 
+def test_check_sqs_to_lambda_delivery_reports_ready_mapping() -> None:
+    result = check_sqs_to_lambda_delivery(
+        FakeRuntime(),
+        "https://sqs.eu-west-2.amazonaws.com/123456789012/dev-work",
+    )
+
+    assert result["summary"] == {"status": "ready", "mapping_count": 1, "risk_count": 0}
+    assert result["mappings"][0]["lambda_timeout_seconds"] == 5
+    assert result["mappings"][0]["timeout_ratio_ok"] is True
+    assert result["mappings"][0]["partial_batch_response_enabled"] is True
+    assert result["signals"]["queue_redrive_configured"] is True
+
+
+def test_check_sqs_to_lambda_delivery_flags_timeout_and_batch_risks() -> None:
+    runtime = FakeRuntime()
+    runtime.lambda_client = RiskyLambdaClient()
+
+    result = check_sqs_to_lambda_delivery(
+        runtime,
+        "https://sqs.eu-west-2.amazonaws.com/123456789012/dev-work",
+    )
+
+    assert result["summary"]["status"] == "needs_attention"
+    assert result["signals"]["risks"] == [
+        "partial_batch_response_not_enabled",
+        "visibility_timeout_too_low_for_lambda_timeout",
+    ]
+
+
 def test_get_sqs_queue_summary_rejects_blank_url() -> None:
     with pytest.raises(ToolInputError, match="queue_url is required"):
         get_sqs_queue_summary(FakeRuntime(), " ")
@@ -233,6 +268,16 @@ class FailingSqsClient:
             {"Error": {"Code": "AccessDenied", "Message": "denied"}},
             "GetQueueAttributes",
         )
+
+
+class RiskyLambdaClient(FakeLambdaClient):
+    def list_event_source_mappings(self, **_: Any) -> dict[str, Any]:
+        response = super().list_event_source_mappings()
+        response["EventSourceMappings"][0]["FunctionResponseTypes"] = []
+        return response
+
+    def get_function_configuration(self, **_: Any) -> dict[str, Any]:
+        return {"Timeout": 30}
 
 
 def test_list_sqs_queues_normalizes_aws_errors() -> None:

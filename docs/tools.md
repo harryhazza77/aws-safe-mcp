@@ -386,6 +386,20 @@ Inputs:
 - `include_permission_checks` optional, default `true`
 - `max_permission_checks` optional
 
+### `check_sqs_to_lambda_delivery`
+
+Checks whether an SQS queue appears ready to deliver messages to Lambda event
+source mappings. The result includes mapping state, Lambda timeout vs queue
+visibility timeout, batch partial-failure response, redrive policy, scaling
+configuration, failure destination hints, and suggested next checks. It does
+not receive messages.
+
+Inputs:
+
+- `queue_url` required
+- `region` optional
+- `max_results` optional
+
 ## SNS
 
 ### `list_sns_topics`

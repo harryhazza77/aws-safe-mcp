@@ -107,6 +107,9 @@ from aws_safe_mcp.tools.sns import (
 from aws_safe_mcp.tools.sns import get_sns_topic_summary as get_sns_topic_summary_tool
 from aws_safe_mcp.tools.sns import list_sns_topics as list_sns_topics_tool
 from aws_safe_mcp.tools.sqs import (
+    check_sqs_to_lambda_delivery as check_sqs_to_lambda_delivery_tool,
+)
+from aws_safe_mcp.tools.sqs import (
     explain_sqs_queue_dependencies as explain_sqs_queue_dependencies_tool,
 )
 from aws_safe_mcp.tools.sqs import get_sqs_queue_summary as get_sqs_queue_summary_tool
@@ -535,6 +538,21 @@ def _register_sqs_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime) -
             region=region,
             include_permission_checks=include_permission_checks,
             max_permission_checks=max_permission_checks,
+        )
+
+    @mcp.tool()
+    @audit.tool("check_sqs_to_lambda_delivery")
+    def check_sqs_to_lambda_delivery(
+        queue_url: str,
+        region: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """Check SQS-to-Lambda event source mapping delivery readiness."""
+        return check_sqs_to_lambda_delivery_tool(
+            runtime,
+            queue_url=queue_url,
+            region=region,
+            max_results=max_results,
         )
 
 

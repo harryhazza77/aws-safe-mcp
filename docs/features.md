@@ -173,6 +173,9 @@ Related tools:
 - Explain SQS queue dependencies, including DLQ/redrive relationships,
   EventBridge producers, Lambda event source consumers, and likely permission
   needs.
+- Check SQS-to-Lambda delivery readiness, including event source mapping state,
+  Lambda timeout vs queue visibility timeout, batch partial-failure response,
+  redrive policy, and scaling/failure destination hints.
 - List SNS topics and summarize topic metadata without publishing messages.
 - Inspect SNS display name, encryption shape, delivery-policy presence, topic
   policy statement count, and bounded safe subscription endpoint summaries.
@@ -190,6 +193,7 @@ Related tools:
 - `list_sqs_queues`
 - `get_sqs_queue_summary`
 - `explain_sqs_queue_dependencies`
+- `check_sqs_to_lambda_delivery`
 - `list_sns_topics`
 - `get_sns_topic_summary`
 - `explain_sns_topic_dependencies`

@@ -170,6 +170,44 @@ def explain_sqs_queue_dependencies(
     }
 
 
+def check_sqs_to_lambda_delivery(
+    runtime: AwsRuntime,
+    queue_url: str,
+    region: str | None = None,
+    max_results: int | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    queue = get_sqs_queue_summary(runtime, queue_url, region=resolved_region)
+    queue_arn = queue.get("queue_arn")
+    if not isinstance(queue_arn, str) or not queue_arn:
+        raise ToolInputError("queue does not expose QueueArn")
+    limit = clamp_limit(
+        max_results,
+        default=20,
+        configured_max=runtime.config.max_results,
+        label="max_results",
+    )
+    warnings: list[str] = []
+    mappings = _lambda_mappings_for_queue(runtime, resolved_region, queue_arn, limit, warnings)
+    diagnostics = [
+        _sqs_lambda_mapping_delivery_diagnostic(runtime, resolved_region, queue, mapping, warnings)
+        for mapping in mappings
+    ]
+    signals = _sqs_lambda_delivery_signals(queue, diagnostics)
+    return {
+        "queue_url": queue["queue_url"],
+        "queue_name": queue["queue_name"],
+        "queue_arn": queue_arn,
+        "region": resolved_region,
+        "summary": _sqs_lambda_delivery_summary(signals),
+        "queue": queue,
+        "mappings": diagnostics,
+        "signals": signals,
+        "suggested_next_checks": _sqs_lambda_delivery_next_checks(signals),
+        "warnings": warnings,
+    }
+
+
 def require_sqs_queue_url(queue_url: str) -> str:
     value = queue_url.strip()
     if not value:
@@ -362,9 +400,133 @@ def _lambda_mappings_for_queue(
             "function_name": _lambda_name_from_arn(mapping.get("FunctionArn")),
             "event_source_arn": mapping.get("EventSourceArn"),
             "batch_size": mapping.get("BatchSize"),
+            "maximum_batching_window_seconds": mapping.get("MaximumBatchingWindowInSeconds"),
+            "function_response_types": mapping.get("FunctionResponseTypes", []),
+            "scaling_config": mapping.get("ScalingConfig") or {},
+            "destination_config": mapping.get("DestinationConfig") or {},
         }
         for mapping in response.get("EventSourceMappings", [])[:limit]
     ]
+
+
+def _sqs_lambda_mapping_delivery_diagnostic(
+    runtime: AwsRuntime,
+    region: str,
+    queue: dict[str, Any],
+    mapping: dict[str, Any],
+    warnings: list[str],
+) -> dict[str, Any]:
+    function_name = str(mapping.get("function_name") or mapping.get("function_arn") or "")
+    function_config = _lambda_function_config(runtime, region, function_name, warnings)
+    lambda_timeout = _optional_int(function_config.get("Timeout"))
+    visibility_timeout = queue.get("visibility_timeout_seconds")
+    timeout_ratio_ok = (
+        None
+        if lambda_timeout is None or visibility_timeout is None
+        else visibility_timeout >= lambda_timeout * 6
+    )
+    partial_batch_response = "ReportBatchItemFailures" in (
+        mapping.get("function_response_types") or []
+    )
+    return {
+        **mapping,
+        "lambda_timeout_seconds": lambda_timeout,
+        "timeout_ratio_ok": timeout_ratio_ok,
+        "partial_batch_response_enabled": partial_batch_response,
+        "failure_destination_configured": bool(mapping.get("destination_config")),
+        "maximum_concurrency": (mapping.get("scaling_config") or {}).get("MaximumConcurrency"),
+        "delivery_risks": _sqs_lambda_mapping_risks(
+            mapping,
+            timeout_ratio_ok=timeout_ratio_ok,
+            partial_batch_response=partial_batch_response,
+            queue=queue,
+        ),
+    }
+
+
+def _lambda_function_config(
+    runtime: AwsRuntime,
+    region: str,
+    function_name: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    if not function_name:
+        return {}
+    client = runtime.client("lambda", region=region)
+    try:
+        response = client.get_function_configuration(FunctionName=function_name)
+    except (BotoCoreError, ClientError) as exc:
+        warnings.append(str(normalize_aws_error(exc, "lambda.GetFunctionConfiguration")))
+        return {}
+    return response if isinstance(response, dict) else {}
+
+
+def _sqs_lambda_mapping_risks(
+    mapping: dict[str, Any],
+    *,
+    timeout_ratio_ok: bool | None,
+    partial_batch_response: bool,
+    queue: dict[str, Any],
+) -> list[str]:
+    risks = []
+    if str(mapping.get("state") or "").lower() != "enabled":
+        risks.append("event_source_mapping_not_enabled")
+    if timeout_ratio_ok is False:
+        risks.append("visibility_timeout_too_low_for_lambda_timeout")
+    if not partial_batch_response and (mapping.get("batch_size") or 0) > 1:
+        risks.append("partial_batch_response_not_enabled")
+    dead_letter = queue.get("dead_letter")
+    if not isinstance(dead_letter, dict) or not dead_letter.get("configured"):
+        risks.append("queue_redrive_not_configured")
+    return risks
+
+
+def _sqs_lambda_delivery_signals(
+    queue: dict[str, Any],
+    diagnostics: list[dict[str, Any]],
+) -> dict[str, Any]:
+    risks = [risk for diagnostic in diagnostics for risk in diagnostic["delivery_risks"]]
+    return {
+        "mapping_count": len(diagnostics),
+        "enabled_mapping_count": sum(
+            1
+            for diagnostic in diagnostics
+            if str(diagnostic.get("state") or "").lower() == "enabled"
+        ),
+        "queue_redrive_configured": bool((queue.get("dead_letter") or {}).get("configured")),
+        "visibility_timeout_seconds": queue.get("visibility_timeout_seconds"),
+        "risk_count": len(risks),
+        "risks": sorted(set(risks)),
+    }
+
+
+def _sqs_lambda_delivery_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    if signals["mapping_count"] == 0:
+        status = "no_lambda_mapping"
+    elif signals["risk_count"]:
+        status = "needs_attention"
+    else:
+        status = "ready"
+    return {
+        "status": status,
+        "mapping_count": signals["mapping_count"],
+        "risk_count": signals["risk_count"],
+    }
+
+
+def _sqs_lambda_delivery_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if signals["mapping_count"] == 0:
+        checks.append("Create or enable a Lambda event source mapping for this queue.")
+    if "visibility_timeout_too_low_for_lambda_timeout" in signals["risks"]:
+        checks.append("Increase queue visibility timeout or reduce Lambda timeout.")
+    if "partial_batch_response_not_enabled" in signals["risks"]:
+        checks.append("Consider ReportBatchItemFailures for batched SQS Lambda consumers.")
+    if "queue_redrive_not_configured" in signals["risks"]:
+        checks.append("Configure a DLQ/redrive policy for poison messages.")
+    if not checks:
+        checks.append("No obvious static SQS-to-Lambda delivery blocker found.")
+    return checks
 
 
 def _queue_policy_document(
