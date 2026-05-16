@@ -5,10 +5,10 @@ Use this file to run an ambitious `aws-safe-mcp` workstream. The plan lives in
 
 ## Working Goal
 
-Execute focused, high-value `aws-safe-mcp` features from [backlog.md](backlog.md).
-Each feature should be useful to real users, tested, verified against local AWS
-emulator fixtures where practical, documented, and committed as a focused
-change.
+Execute all focused, high-value `aws-safe-mcp` features from
+[backlog.md](backlog.md). Each feature should be useful to real users, tested,
+verified against local AWS emulator fixtures where practical, documented, and
+committed as a focused change.
 
 ## Repositories
 
@@ -19,8 +19,10 @@ change.
 
 - Use [features.md](features.md) to understand current user-facing capability.
 - Use [backlog.md](backlog.md) as the ordered implementation plan.
-- Pick the first backlog item by default, unless the user names a different
-  item.
+- Work through backlog items in order by default, unless the user names a
+  different item.
+- Preserve the one-feature-one-commit rule even when running many features in a
+  row.
 - Prefer diagnostic workflows over raw list tools.
 - Prefer small features that improve safe AWS investigation.
 
@@ -31,7 +33,7 @@ When the user invokes `/goal`, do this:
 1. Read `docs/features.md`, `docs/backlog.md`, and `docs/goal.md`.
 2. Select the first unfinished backlog item unless the user explicitly picks
    another item.
-3. Cross-check existing code and docs to avoid duplicating a feature.
+3. Cross-check existing code and docs to avoid duplicating that feature.
 4. Implement the smallest version that satisfies the backlog acceptance notes.
 5. Add or update focused unit tests.
 6. Update `docs/tools.md` and move the completed capability from
@@ -47,6 +49,12 @@ When the user invokes `/goal`, do this:
    - If emulator proof would require new permission prompts, stop after unit
      tests and clearly report the exact skipped proof command shapes.
 9. Commit the main repo as one focused feature commit.
+10. If the user asked to continue the goal, repeat from step 1 for the next
+    backlog item.
+
+Do not bundle multiple backlog items into one main-repo commit. After each
+feature, leave both repositories clean or clearly report why that was not
+possible before starting the next feature.
 
 ## Fixture Strategy
 
@@ -73,6 +81,7 @@ Each feature should have:
 - Move the completed item out of `docs/backlog.md` and into `docs/features.md`.
 - One focused commit in the main repo.
 - A separate fixture repo commit when Terraform fixtures change.
+- A clean repository state before the next feature starts.
 
 ## Safety Rules
 
