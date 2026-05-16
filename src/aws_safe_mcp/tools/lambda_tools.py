@@ -208,6 +208,46 @@ def get_lambda_alias_version_summary(
     }
 
 
+def investigate_lambda_deployment_drift(
+    runtime: AwsRuntime,
+    function_name: str,
+    region: str | None = None,
+    max_results: int | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_name = require_lambda_name(function_name)
+    summary = get_lambda_summary(runtime, required_name, region=resolved_region)
+    deployment = get_lambda_alias_version_summary(
+        runtime,
+        required_name,
+        region=resolved_region,
+        max_results=max_results,
+    )
+    client = runtime.client("lambda", region=resolved_region)
+    latest_policy_exposed, policy_warnings = _lambda_latest_policy_exposed(client, required_name)
+    signals = _lambda_deployment_drift_signals(summary, deployment, latest_policy_exposed)
+    warnings = [*deployment.get("warnings", []), *policy_warnings]
+    return {
+        "function_name": required_name,
+        "region": resolved_region,
+        "summary": _lambda_deployment_drift_summary(signals),
+        "current_configuration": {
+            "runtime": summary.get("runtime"),
+            "architecture": summary.get("architecture"),
+            "last_update_status": summary.get("last_update_status"),
+            "state": summary.get("state"),
+            "environment_variable_keys": summary.get("environment_variable_keys", []),
+        },
+        "aliases": deployment["aliases"],
+        "versions": deployment["versions"],
+        "provisioned_concurrency": deployment["provisioned_concurrency"],
+        "latest_policy_exposed": latest_policy_exposed,
+        "signals": signals,
+        "suggested_next_checks": _lambda_deployment_drift_next_checks(signals),
+        "warnings": warnings,
+    }
+
+
 def get_lambda_recent_errors(
     runtime: AwsRuntime,
     function_name: str,
@@ -2036,6 +2076,115 @@ def _lambda_resource_policy_summary(client: Any, function_name: str) -> dict[str
         "actions": sorted(actions),
         "warnings": [],
     }
+
+
+def _lambda_latest_policy_exposed(
+    client: Any,
+    function_name: str,
+) -> tuple[bool | None, list[str]]:
+    try:
+        response = client.get_policy(FunctionName=function_name)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code in {"ResourceNotFoundException", "PolicyNotFoundException"}:
+            return False, []
+        return None, [str(normalize_aws_error(exc, "lambda.GetPolicy"))]
+    except BotoCoreError as exc:
+        return None, [str(normalize_aws_error(exc, "lambda.GetPolicy"))]
+    policy = _parse_policy_document(response.get("Policy"))
+    statements = policy.get("Statement", []) if isinstance(policy, dict) else []
+    if isinstance(statements, dict):
+        statements = [statements]
+    for statement in statements if isinstance(statements, list) else []:
+        resources = _policy_actions(statement.get("Resource"))
+        if any(str(resource).endswith(":$LATEST") for resource in resources):
+            return True, []
+    return False, []
+
+
+def _lambda_deployment_drift_signals(
+    summary: dict[str, Any],
+    deployment: dict[str, Any],
+    latest_policy_exposed: bool | None,
+) -> dict[str, Any]:
+    latest_version = _latest_numeric_lambda_version(deployment.get("versions", []))
+    stale_aliases = [
+        alias.get("name")
+        for alias in deployment.get("aliases", [])
+        if latest_version and str(alias.get("function_version")) != latest_version
+    ]
+    weighted_aliases = [
+        alias.get("name")
+        for alias in deployment.get("aliases", [])
+        if alias.get("additional_version_weights")
+    ]
+    failed_versions = [
+        version.get("version")
+        for version in deployment.get("versions", [])
+        if str(version.get("last_update_status") or "").lower() not in {"", "successful"}
+    ]
+    pc_not_ready = [
+        item.get("qualifier")
+        for item in deployment.get("provisioned_concurrency", {}).get("configs", [])
+        if str(item.get("status") or "").upper() not in {"", "READY"}
+    ]
+    risks = []
+    if str(summary.get("last_update_status") or "").lower() not in {"", "successful"}:
+        risks.append("current_update_not_successful")
+    if stale_aliases:
+        risks.append("stale_aliases")
+    if weighted_aliases:
+        risks.append("weighted_aliases_present")
+    if failed_versions:
+        risks.append("published_version_update_not_successful")
+    if pc_not_ready:
+        risks.append("provisioned_concurrency_not_ready")
+    if latest_policy_exposed is True:
+        risks.append("latest_version_policy_exposed")
+    return {
+        "latest_published_version": latest_version,
+        "stale_aliases": stale_aliases,
+        "weighted_aliases": weighted_aliases,
+        "failed_versions": failed_versions,
+        "provisioned_concurrency_not_ready": pc_not_ready,
+        "latest_policy_exposed": latest_policy_exposed,
+        "risk_count": len(risks),
+        "risks": risks,
+    }
+
+
+def _latest_numeric_lambda_version(versions: list[dict[str, Any]]) -> str | None:
+    numeric = [
+        int(str(version.get("version")))
+        for version in versions
+        if str(version.get("version") or "").isdigit()
+    ]
+    return str(max(numeric)) if numeric else None
+
+
+def _lambda_deployment_drift_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "drift_signals_detected" if signals["risk_count"] else "no_drift_signals",
+        "risk_count": signals["risk_count"],
+        "risks": signals["risks"],
+    }
+
+
+def _lambda_deployment_drift_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if "current_update_not_successful" in signals["risks"]:
+        checks.append("Inspect Lambda LastUpdateStatusReason before shifting more traffic.")
+    if "stale_aliases" in signals["risks"]:
+        checks.append("Confirm aliases still point at intended published versions.")
+    if "weighted_aliases_present" in signals["risks"]:
+        checks.append("Confirm weighted alias canary traffic is expected.")
+    if "provisioned_concurrency_not_ready" in signals["risks"]:
+        checks.append("Inspect provisioned concurrency status before relying on warm capacity.")
+    if "latest_version_policy_exposed" in signals["risks"]:
+        checks.append("Review Lambda resource policy statements that expose $LATEST.")
+    if not checks:
+        checks.append("No deployment drift signal found in Lambda metadata.")
+    return checks
 
 
 def _lambda_async_invoke_config(

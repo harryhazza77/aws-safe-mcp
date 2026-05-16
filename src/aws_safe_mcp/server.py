@@ -103,6 +103,9 @@ from aws_safe_mcp.tools.lambda_tools import (
     investigate_lambda_concurrency_bottlenecks as investigate_lambda_concurrency_bottlenecks_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
+    investigate_lambda_deployment_drift as investigate_lambda_deployment_drift_tool,
+)
+from aws_safe_mcp.tools.lambda_tools import (
     investigate_lambda_failure as investigate_lambda_failure_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
@@ -340,6 +343,21 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
     ) -> dict[str, object]:
         """Summarize Lambda aliases, published versions, and traffic policy hints."""
         return get_lambda_alias_version_summary_tool(
+            runtime,
+            function_name=function_name,
+            region=region,
+            max_results=max_results,
+        )
+
+    @mcp.tool()
+    @audit.tool("investigate_lambda_deployment_drift")
+    def investigate_lambda_deployment_drift(
+        function_name: str,
+        region: str | None = None,
+        max_results: int | None = None,
+    ) -> dict[str, object]:
+        """Investigate Lambda alias, version, canary, update, and $LATEST drift."""
+        return investigate_lambda_deployment_drift_tool(
             runtime,
             function_name=function_name,
             region=region,

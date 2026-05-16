@@ -153,6 +153,20 @@ Inputs:
 - `region` optional
 - `max_results` optional
 
+### `investigate_lambda_deployment_drift`
+
+Checks Lambda alias/version deployment drift without fetching code. It compares
+current update status, runtime, architecture, environment key set, aliases,
+weighted routing, published versions, provisioned concurrency, and `$LATEST`
+resource-policy exposure. It does not return environment values, code packages,
+or raw policy documents.
+
+Inputs:
+
+- `function_name` required
+- `region` optional
+- `max_results` optional
+
 ### `get_lambda_recent_errors`
 
 Returns recent error-like CloudWatch log events for one Lambda function. The

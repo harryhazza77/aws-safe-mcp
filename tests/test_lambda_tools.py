@@ -22,6 +22,7 @@ from aws_safe_mcp.tools.lambda_tools import (
     get_lambda_summary,
     investigate_lambda_cold_start_init,
     investigate_lambda_concurrency_bottlenecks,
+    investigate_lambda_deployment_drift,
     investigate_lambda_failure,
     investigate_lambda_timeout_root_cause,
     list_lambda_functions,
@@ -186,9 +187,10 @@ class FakeLambdaClient:
                             "Effect": "Allow",
                             "Principal": {"Service": "apigateway.amazonaws.com"},
                             "Action": "lambda:InvokeFunction",
-                            "Resource": (
-                                "arn:aws:lambda:eu-west-2:123456789012:function:dev-api"
-                            ),
+                            "Resource": [
+                                "arn:aws:lambda:eu-west-2:123456789012:function:dev-api",
+                                "arn:aws:lambda:eu-west-2:123456789012:function:dev-api:$LATEST",
+                            ],
                             "Condition": {
                                 "ArnLike": {
                                     "AWS:SourceArn": (
@@ -699,6 +701,32 @@ def test_get_lambda_alias_version_summary_keeps_optional_failures_best_effort() 
     assert result["summary"]["published_version_count"] == 0
     assert result["policy_hints"]["available"] is False
     assert len(result["warnings"]) == 3
+
+
+def test_investigate_lambda_deployment_drift_flags_alias_and_latest_risks() -> None:
+    result = investigate_lambda_deployment_drift(FakeRuntime(), "dev-api")
+
+    assert result["summary"] == {
+        "status": "drift_signals_detected",
+        "risk_count": 3,
+        "risks": [
+            "stale_aliases",
+            "weighted_aliases_present",
+            "latest_version_policy_exposed",
+        ],
+    }
+    assert result["signals"]["latest_published_version"] == "4"
+    assert result["signals"]["stale_aliases"] == ["live"]
+    assert result["signals"]["weighted_aliases"] == ["live"]
+    assert result["latest_policy_exposed"] is True
+    assert result["current_configuration"]["environment_variable_keys"] == [
+        "API_URL",
+        "PUBLIC_NAME",
+        "QUEUE_URL",
+        "SECRET_TOKEN",
+        "TOPIC_ARN",
+    ]
+    assert "must-not-leak" not in str(result)
 
 
 def test_get_lambda_event_source_mapping_diagnostics_returns_safe_metadata() -> None:

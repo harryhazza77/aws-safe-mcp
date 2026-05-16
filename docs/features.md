@@ -89,6 +89,10 @@ Related tools:
 - Summarize Lambda aliases, weighted traffic routing, published versions,
   provisioned concurrency presence, and resource policy hints without fetching
   code package contents or returning full policy JSON.
+- Investigate Lambda deployment drift across aliases, versions, weighted
+  routing, update status, runtime/architecture, environment key set,
+  provisioned concurrency, and `$LATEST` policy exposure without returning
+  environment values or code packages.
 - Diagnose Lambda event source mappings with source state, batch/window
   settings, failure destination, filter presence, and inferred role permission
   checks without reading queue messages or stream records.
@@ -119,6 +123,7 @@ Related tools:
 - `get_lambda_summary`
 - `get_lambda_event_source_mapping_diagnostics`
 - `get_lambda_alias_version_summary`
+- `investigate_lambda_deployment_drift`
 - `get_lambda_recent_errors`
 - `investigate_lambda_failure`
 - `investigate_lambda_cold_start_init`
