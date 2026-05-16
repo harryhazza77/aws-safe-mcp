@@ -7,6 +7,40 @@ to an explicit AWS account allowlist.
 Use this page to find capabilities by user intent. See the
 [tool catalog](tools.md) for exact tool names, inputs, and output contracts.
 
+## Quick Capability Reference
+
+| Service / Intent | Inventory | Dependency Graph | Failure Diagnosis | Permission Check | Observability | Cross-Service |
+| --- | --- | --- | --- | --- | --- | --- |
+| Lambda | `list_lambda_functions`, `get_lambda_summary` | `explain_lambda_dependencies` | `investigate_lambda_failure`, `investigate_lambda_cold_start_init`, `investigate_lambda_timeout_root_cause`, `investigate_lambda_concurrency_bottlenecks`, `audit_async_lambda_failure_path`, `investigate_lambda_deployment_drift` | `check_lambda_permission_path`, `check_lambda_to_sqs_sendability`, `prove_lambda_invocation_path`, `analyze_cross_account_lambda_invocation` | `get_lambda_recent_errors`, `get_lambda_event_source_mapping_diagnostics` | `search_aws_resources`, `get_cross_service_incident_brief`, `plan_end_to_end_transaction_trace`, `export_application_dependency_graph` |
+| Step Functions | `list_step_functions`, `get_step_function_execution_summary` | `explain_step_function_dependencies` | `investigate_step_function_failure`, `audit_step_function_retry_catch_safety` | partial (via `explain_step_function_dependencies` task-level proof) | `get_step_function_execution_summary` | `search_aws_resources`, `plan_end_to_end_transaction_trace`, `export_application_dependency_graph` |
+| API Gateway | `list_api_gateways`, `get_api_gateway_summary`, `get_api_gateway_authorizer_summary` | `explain_api_gateway_dependencies` | `investigate_api_gateway_route`, `analyze_api_gateway_authorizer_failures` | partial (Lambda-invoke trust via `investigate_api_gateway_route`, `explain_api_gateway_dependencies`) | partial (recent Lambda errors via `investigate_api_gateway_route`) | `search_aws_resources`, `plan_end_to_end_transaction_trace`, `export_application_dependency_graph` |
+| EventBridge | `list_eventbridge_rules`, `get_eventbridge_time_sources` | `explain_eventbridge_rule_dependencies`, `explain_event_driven_flow` | `investigate_eventbridge_rule_delivery`, `audit_eventbridge_target_retry_dlq_safety` | partial (target trust + `RoleArn` via `explain_eventbridge_rule_dependencies`) | `investigate_eventbridge_rule_delivery` (AWS/Events metrics) | `search_aws_resources`, `explain_event_driven_flow`, `plan_end_to_end_transaction_trace`, `export_application_dependency_graph` |
+| SQS | `list_sqs_queues`, `get_sqs_queue_summary` | `explain_sqs_queue_dependencies` | `investigate_sqs_backlog_stall`, `check_sqs_to_lambda_delivery`, `analyze_queue_dlq_replay_readiness` | partial (queue policy + Lambda-sender via `check_lambda_to_sqs_sendability`, `explain_sqs_queue_dependencies`) | `get_sqs_queue_summary` (depth/age attributes), `investigate_sqs_backlog_stall` | `search_aws_resources`, `plan_end_to_end_transaction_trace`, `export_application_dependency_graph` |
+| SNS | `list_sns_topics`, `get_sns_topic_summary` | `explain_sns_topic_dependencies` | `audit_sns_fanout_delivery_readiness` | partial (downstream Lambda/SQS policy trust via `explain_sns_topic_dependencies`, `audit_sns_fanout_delivery_readiness`) | — | `search_aws_resources`, `plan_end_to_end_transaction_trace`, `export_application_dependency_graph` |
+| DynamoDB | `list_dynamodb_tables`, `get_dynamodb_table_summary` | — | `check_dynamodb_stream_lambda_readiness` | partial (stream-consumer role only, via `check_dynamodb_stream_lambda_readiness`) | — | `search_aws_resources`, `plan_end_to_end_transaction_trace`, `export_application_dependency_graph` |
+| S3 | `list_s3_buckets`, `list_s3_objects`, `get_s3_bucket_summary` | — | `check_s3_notification_destination_readiness` | partial (notification destination trust via `check_s3_notification_destination_readiness`) | partial (`get_s3_bucket_summary` access-logging shape) | `search_aws_resources`, `plan_end_to_end_transaction_trace`, `export_application_dependency_graph` |
+| KMS | `list_kms_keys`, `get_kms_key_summary` | — | `find_kms_key_lifecycle_blast_radius` | `check_kms_dependent_path` | — | partial (`find_kms_key_lifecycle_blast_radius` consumes dependent ARN hints) |
+| IAM | `get_iam_role_summary` | — | `explain_iam_simulation_denial` | `explain_iam_simulation_denial` | — | underpins per-service permission checks |
+| CloudWatch (alarms + logs) | `list_cloudwatch_alarms`, `get_cloudwatch_alarm_summary`, `list_cloudwatch_log_groups` | — | `find_cloudwatch_alarm_coverage_gaps` | `check_cloudwatch_logs_writeability` | `search_cloudwatch_logs`, `query_cloudwatch_logs_insights`, `get_cloudwatch_alarm_summary` | `build_log_signal_correlation_timeline`, `get_cross_service_incident_brief` |
+| ECS | `list_ecs_clusters`, `list_ecs_services`, `get_ecs_service_summary` | partial (task/exec role + log-group wiring via `get_ecs_service_summary`) | — | — | partial (log-group surface via `get_ecs_service_summary`) | `search_aws_resources_by_tag` |
+| Cross-service / app-wide | `search_aws_resources`, `search_aws_resources_by_tag`, `diagnose_region_partition_mismatches` | `export_application_dependency_graph` | `get_cross_service_incident_brief`, `run_first_blocked_edge_incident`, `audit_multi_region_drift_failover_readiness`, `get_risk_scored_dependency_health_summary` | `analyze_resource_policy_condition_mismatches` | `build_log_signal_correlation_timeline`, `generate_application_health_narrative` | `plan_end_to_end_transaction_trace`, `explain_event_driven_flow`, `generate_application_health_narrative` |
+
+### How to read this
+
+- A cell value in backticks is the tool name. Look it up in
+  [`docs/tools.md`](tools.md) for the input/output contract.
+- `partial` means the capability is present but only via a related tool (for
+  example, DynamoDB permission coverage exists only on the Lambda stream-consumer
+  edge through `check_dynamodb_stream_lambda_readiness`).
+- A `—` is a genuine gap, not an oversight; to propose a new tool see
+  [`docs/contributing/add-a-tool.md`](contributing/add-a-tool.md) and
+  [`docs/vision.md`](vision.md).
+- Permission Check cells fail to `unknown` (not denied) when the calling
+  principal lacks `iam:SimulatePrincipalPolicy`; see
+  [`docs/iam-per-tool.md`](iam-per-tool.md) for the required actions per tool.
+- This table is hand-maintained — when adding a tool, update both
+  [`docs/tools.md`](tools.md) and this section.
+
 ## Authentication And Safety
 
 - Check whether the active AWS credentials are valid.
