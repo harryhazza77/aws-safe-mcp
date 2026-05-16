@@ -342,6 +342,43 @@ def investigate_lambda_cold_start_init(
     }
 
 
+def investigate_lambda_timeout_root_cause(
+    runtime: AwsRuntime,
+    function_name: str,
+    since_minutes: int | None = 60,
+    region: str | None = None,
+) -> dict[str, Any]:
+    resolved_region = resolve_region(runtime, region)
+    required_name = require_lambda_name(function_name)
+    summary = get_lambda_summary(runtime, required_name, region=resolved_region)
+    recent_errors = get_lambda_recent_errors(
+        runtime,
+        required_name,
+        since_minutes=since_minutes,
+        region=resolved_region,
+        max_events=50,
+    )
+    event_sources = _lambda_event_source_summary(runtime, required_name, resolved_region)
+    network = explain_lambda_network_access(runtime, required_name, region=resolved_region)
+    signals = _lambda_timeout_signals(summary, recent_errors, event_sources, network)
+    return {
+        "function_name": required_name,
+        "region": resolved_region,
+        "summary": _lambda_timeout_summary(signals),
+        "signals": signals,
+        "recent_error_groups": recent_errors.get("groups", []),
+        "event_sources": event_sources,
+        "network_summary": network.get("summary"),
+        "dependency_hints": summary.get("environment_dependency_hints", []),
+        "suggested_next_checks": _lambda_timeout_next_checks(signals),
+        "warnings": [
+            *_lambda_summary_warnings(summary),
+            *recent_errors.get("warnings", []),
+            *network.get("warnings", []),
+        ],
+    }
+
+
 def audit_async_lambda_failure_path(
     runtime: AwsRuntime,
     function_name: str,
@@ -3802,6 +3839,76 @@ def _lambda_cold_start_next_checks(signals: dict[str, Any]) -> list[str]:
         checks.append("Consider whether memory is too low for initialization work.")
     if not checks:
         checks.append("No strong cold-start/init signal found in bounded metrics and logs.")
+    return checks
+
+
+def _lambda_timeout_signals(
+    summary: dict[str, Any],
+    recent_errors: dict[str, Any],
+    event_sources: dict[str, Any],
+    network: dict[str, Any],
+) -> dict[str, Any]:
+    metrics = summary.get("recent_metrics", {})
+    timeout_seconds = float(summary.get("timeout_seconds") or 0)
+    max_duration_ms = _metric_value(metrics, "max_duration_ms")
+    messages = " ".join(
+        str(group.get("sample_message", "")) for group in recent_errors.get("groups", [])
+    )
+    dependency_hints = summary.get("environment_dependency_hints", [])
+    mappings = event_sources.get("event_sources") or []
+    return {
+        "timeout_configured_seconds": timeout_seconds,
+        "max_duration_ms_last_hour": max_duration_ms,
+        "duration_near_timeout": _has_timeout_indicators(
+            messages,
+            max_duration_ms,
+            timeout_seconds,
+        ),
+        "timeout_log_indicators": _has_timeout_indicators(messages, 0, 0),
+        "downstream_dependency_hint_count": len(dependency_hints),
+        "network_blocked_or_unknown": str((network.get("summary") or {}).get("internet_access"))
+        in {"no", "unknown"},
+        "event_source_mapping_count": event_sources.get("count", 0),
+        "event_source_retry_pressure": any(
+            int(item.get("batch_size") or 0) >= 10 for item in mappings
+        ),
+        "vpc_enabled": bool((summary.get("vpc") or {}).get("enabled")),
+    }
+
+
+def _lambda_timeout_summary(signals: dict[str, Any]) -> dict[str, Any]:
+    causes = []
+    if signals["timeout_log_indicators"] or signals["duration_near_timeout"]:
+        causes.append("function_duration_near_timeout")
+    if signals["network_blocked_or_unknown"]:
+        causes.append("network_bound_or_unreachable_downstream")
+    if signals["downstream_dependency_hint_count"]:
+        causes.append("downstream_dependency_bound")
+    if signals["event_source_retry_pressure"]:
+        causes.append("queue_or_stream_batch_pressure")
+    return {
+        "status": "timeout_risks_detected" if causes else "no_timeout_risks_detected",
+        "likely_causes": causes,
+        "confidence": "high"
+        if signals["timeout_log_indicators"]
+        else "medium"
+        if causes
+        else "low",
+    }
+
+
+def _lambda_timeout_next_checks(signals: dict[str, Any]) -> list[str]:
+    checks = []
+    if signals["duration_near_timeout"]:
+        checks.append("Compare max duration against timeout and inspect slow code paths.")
+    if signals["network_blocked_or_unknown"]:
+        checks.append("Run Lambda network and target reachability diagnostics for dependencies.")
+    if signals["downstream_dependency_hint_count"]:
+        checks.append("Check downstream dependency callability and permissions.")
+    if signals["event_source_retry_pressure"]:
+        checks.append("Review event source batch size, retry age, and partial failure handling.")
+    if not checks:
+        checks.append("No strong timeout root-cause signal found in bounded metrics and logs.")
     return checks
 
 

@@ -23,6 +23,7 @@ from aws_safe_mcp.tools.lambda_tools import (
     investigate_lambda_cold_start_init,
     investigate_lambda_concurrency_bottlenecks,
     investigate_lambda_failure,
+    investigate_lambda_timeout_root_cause,
     list_lambda_functions,
     prove_lambda_invocation_path,
     simulate_lambda_security_group_path,
@@ -1114,6 +1115,19 @@ def test_investigate_lambda_cold_start_init_reports_config_metrics_and_logs() ->
     assert result["signals"]["init_duration_ms_last_hour"] == 900.0
     assert result["log_signals"]["init_report_count"] == 1
     assert result["configuration"]["code_size_bytes"] == 12345
+    assert "must-not-leak" not in str(result)
+
+
+def test_investigate_lambda_timeout_root_cause_classifies_dependency_and_batch_risks() -> None:
+    result = investigate_lambda_timeout_root_cause(FakeRuntime(), "dev-api")
+
+    assert result["summary"]["status"] == "timeout_risks_detected"
+    assert result["summary"]["likely_causes"] == [
+        "downstream_dependency_bound",
+        "queue_or_stream_batch_pressure",
+    ]
+    assert result["signals"]["downstream_dependency_hint_count"] == 4
+    assert result["signals"]["event_source_retry_pressure"] is True
     assert "must-not-leak" not in str(result)
 
 

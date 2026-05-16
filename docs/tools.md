@@ -177,6 +177,18 @@ Inputs:
 - `since_minutes` optional, default `60`
 - `region` optional
 
+### `investigate_lambda_timeout_root_cause`
+
+Combines timeout configuration, max duration metric, recent timeout/error log
+groups, dependency hints, network posture, and event source mapping pressure to
+classify likely timeout causes. It does not read payloads or secret values.
+
+Inputs:
+
+- `function_name` required
+- `since_minutes` optional, default `60`
+- `region` optional
+
 ### `audit_async_lambda_failure_path`
 
 Audits where asynchronously invoked Lambda events go when invocation fails. The

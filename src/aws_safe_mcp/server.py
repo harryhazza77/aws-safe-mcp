@@ -97,6 +97,9 @@ from aws_safe_mcp.tools.lambda_tools import (
     investigate_lambda_failure as investigate_lambda_failure_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
+    investigate_lambda_timeout_root_cause as investigate_lambda_timeout_root_cause_tool,
+)
+from aws_safe_mcp.tools.lambda_tools import (
     list_lambda_functions as list_lambda_functions_tool,
 )
 from aws_safe_mcp.tools.lambda_tools import (
@@ -351,6 +354,21 @@ def _register_lambda_tools(mcp: FastMCP, audit: AuditLogger, runtime: AwsRuntime
     ) -> dict[str, object]:
         """Diagnose Lambda cold-start and init failure signals from config, metrics, and logs."""
         return investigate_lambda_cold_start_init_tool(
+            runtime,
+            function_name=function_name,
+            since_minutes=since_minutes,
+            region=region,
+        )
+
+    @mcp.tool()
+    @audit.tool("investigate_lambda_timeout_root_cause")
+    def investigate_lambda_timeout_root_cause(
+        function_name: str,
+        since_minutes: int | None = 60,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        """Diagnose likely Lambda timeout root causes from metrics, logs, deps, and network."""
+        return investigate_lambda_timeout_root_cause_tool(
             runtime,
             function_name=function_name,
             since_minutes=since_minutes,

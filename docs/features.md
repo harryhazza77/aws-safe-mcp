@@ -68,6 +68,9 @@ Related tools:
   mappings into a failure investigation.
 - Investigate cold-start and init failure signals from runtime/package shape,
   memory, VPC attachment, init duration metrics, and bounded init log patterns.
+- Analyze Lambda timeout root causes by combining timeout config, max duration
+  metrics, recent timeout log fingerprints, dependency hints, VPC/network
+  posture, and event source batch pressure.
 - Audit async Lambda failure paths, including retry age/attempt settings,
   on-failure destinations, DLQ fallback, reserved concurrency, and recent
   throttles, plus a retry topology graph of Lambda destinations, DLQ, and event
@@ -116,6 +119,7 @@ Related tools:
 - `get_lambda_recent_errors`
 - `investigate_lambda_failure`
 - `investigate_lambda_cold_start_init`
+- `investigate_lambda_timeout_root_cause`
 - `audit_async_lambda_failure_path`
 - `investigate_lambda_concurrency_bottlenecks`
 - `explain_lambda_dependencies`
